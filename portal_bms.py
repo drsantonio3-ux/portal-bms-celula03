@@ -141,12 +141,26 @@ if arquivo_pdf is not None:
         ativos_separados = []
         ids_utilizados = []
         
+        # Função auxiliar para capturar o número de série (coluna H ou equivalente)
+        def obter_serie(item):
+            # Tenta pegar da coluna de número de série se existir no df
+            for col in item.index:
+                if any(term in col.upper() for term in ["SERIE", "SÉRIE", "SERIAL"]):
+                    val = str(item.get(col, ""))
+                    return val if val != "nan" else "N/A"
+            # Se não achar pelo nome, pega pelo índice da coluna H (coluna 7 no padrão 0-index)
+            if len(item) > 7:
+                val = str(item.iloc[7])
+                return val if val != "nan" else "N/A"
+            return "N/A"
+
         if tem_temptale:
             filtro = df_estoque[df_estoque['Descricao_Clean'].str.contains("TEMPTALE", na=False)]
             if not filtro.empty:
                 item = filtro.iloc[0]
-                ativos_separados.append(f"• TempTale Ambiente ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')}")
-                ids_utilizados.append(("TempTale Ambiente", str(item.get('Palete', 'N/A')).strip(), str(item.get('Identificacao Estoque', 'N/A')).strip()))
+                serie = obter_serie(item)
+                ativos_separados.append(f"• TempTale Ambiente ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')} | Série: {serie}")
+                ids_utilizados.append(("TempTale Ambiente", str(item.get('Palete', 'N/A')).strip(), str(item.get('Identificacao Estoque', 'N/A')).strip(), serie))
             else:
                 ativos_separados.append("• TempTale Ambiente ➔ ⚠️ Atenção: Nenhum item disponível no estoque!")
 
@@ -154,8 +168,9 @@ if arquivo_pdf is not None:
             filtro = df_estoque[df_estoque['Descricao_Clean'].str.contains("TAGALERT 15-25", na=False)]
             if not filtro.empty:
                 item = filtro.iloc[0]
-                ativos_separados.append(f"• Tag Alert Ambiente ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')}")
-                ids_utilizados.append(("Tag Alert Ambiente", str(item.get('Palete', 'N/A')).strip(), str(item.get('Identificacao Estoque', 'N/A')).strip()))
+                serie = obter_serie(item)
+                ativos_separados.append(f"• Tag Alert Ambiente ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')} | Série: {serie}")
+                ids_utilizados.append(("Tag Alert Ambiente", str(item.get('Palete', 'N/A')).strip(), str(item.get('Identificacao Estoque', 'N/A')).strip(), serie))
             else:
                 ativos_separados.append("• Tag Alert Ambiente ➔ ⚠️ Atenção: Nenhum item disponível no estoque!")
 
@@ -163,8 +178,9 @@ if arquivo_pdf is not None:
             filtro = df_estoque[df_estoque['Descricao_Clean'].str.contains("TAGALERT 2-8", na=False)]
             if not filtro.empty:
                 item = filtro.iloc[0]
-                ativos_separados.append(f"• Tag Alert Refrigerado ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')}")
-                ids_utilizados.append(("Tag Alert Refrigerado", str(item.get('Palete', 'N/A')).strip(), str(item.get('Identificacao Estoque', 'N/A')).strip()))
+                serie = obter_serie(item)
+                ativos_separados.append(f"• Tag Alert Refrigerado ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')} | Série: {serie}")
+                ids_utilizados.append(("Tag Alert Refrigerado", str(item.get('Palete', 'N/A')).strip(), str(item.get('Identificacao Estoque', 'N/A')).strip(), serie))
             else:
                 ativos_separados.append("• Tag Alert Refrigerado ➔ ⚠️ Atenção: Nenhum item disponível no estoque!")
 
@@ -181,11 +197,10 @@ if arquivo_pdf is not None:
             if not delivery_number or delivery_number.strip() == "":
                 st.error("❌ **Atenção:** Você precisa obrigatoriamente preencher o Delivery Number!")
             else:
-                # Envio automático para a aba Auditoria via Apps Script
                 url_script = "https://script.google.com/macros/s/AKfycbzpwZC2LW7PQ1JGMkJIZD3Rxd4nv4pfEZ1QS1D9jDxQbt4Qf2hiCmv9dJ8pAJnBHJglug/exec"
                 sucesso_envio = True
                 
-                for nome, palete, id_est in ids_utilizados:
+                for nome, palete, id_est, serie in ids_utilizados:
                     payload = {
                         "data_uso": datetime.now().strftime('%d/%m/%Y %H:%M'),
                         "delivery_number": str(delivery_number),
@@ -194,7 +209,8 @@ if arquivo_pdf is not None:
                         "tipo_equipamento": str(nome),
                         "palete": str(palete),
                         "id_estoque": str(id_est),
-                        "cidade_destino": str(cidade_destino)
+                        "cidade_destino": str(cidade_destino),
+                        "numero_serie": str(serie)
                     }
                     try:
                         req = urllib.request.Request(
@@ -207,7 +223,7 @@ if arquivo_pdf is not None:
                         sucesso_envio = False
                 
                 if sucesso_envio:
-                    st.success(f"✅ **Utilização registrada com sucesso para o Delivery {delivery_number}!** Os dados foram salvos automaticamente na aba de Auditoria.")
+                    st.success(f"✅ **Utilização registrada com sucesso para o Delivery {delivery_number}!** Dados e número de série salvos na aba Auditoria.")
                 else:
                     st.warning(f"⚠️ **Delivery {delivery_number} confirmado**, mas houve uma falha de conexão ao salvar na aba Auditoria.")
     else:
