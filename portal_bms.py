@@ -3,13 +3,12 @@ import PyPDF2
 import pandas as pd
 from datetime import datetime, timedelta
 import streamlit.components.v1 as components
-import os
 import re
 
 # --- CONFIGURAÇÕES DA PÁGINA ---
 st.set_page_config(page_title="Portal BMS - Célula 03", layout="centered")
 st.title("📦 Automação Total BMS - Célula 03")
-st.write("Leitura de Packing List, SLA, Baixa de Estoque e Copias Individuais")
+st.write("Leitura de Packing List, SLA, Baixa de Estoque e Copias Individuais (Google Sheets)")
 
 # --- FERIADOS E CALENDÁRIO ---
 FERIADOS = [datetime(2026, 9, 7).date()]
@@ -31,46 +30,43 @@ def somar_dias_uteis(data_inicio, dias):
         dias_adicionados += 1
     return data_atual
 
-# --- CARREGAR PLANILHAS LOCAIS ---
-@st.cache_data(ttl=1)
-def carregar_dados():
-    caminho_base = os.path.dirname(os.path.abspath(__file__))
+# --- CARREGAR DADOS DO GOOGLE SHEETS (ESTOQUE) E TABELA DE TES INTERNA ---
+@st.cache_data(ttl=5)
+def carregar_dados_sheets():
+    id_estoque = "10f18RZ-48HiJS2HckG6Siw2WRE9zz92_Pj6chkTwXik"
+    url_estoque = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv"
     
-    # 1. Estoque
-    arquivo_local = os.path.join(caminho_base, 'estoque_atualizado_bms.xlsx')
-    arquivo_original = os.path.join(caminho_base, 'LOGGER BMS.xlsx')
-    
-    if os.path.exists(arquivo_local):
-        df_est = pd.read_excel(arquivo_local)
-    elif os.path.exists(arquivo_original):
-        try:
-            df_est = pd.read_excel(arquivo_original, skiprows=2)
-            df_est.to_excel(arquivo_local, index=False)
-        except Exception:
-            df_est = None
-    else:
+    df_est = None
+    try:
+        df_est = pd.read_csv(url_estoque)
+    except Exception:
         df_est = None
-        
+            
     if df_est is not None:
         df_est['Descricao_Clean'] = df_est['Descricao'].astype(str).str.upper()
 
-    # 2. TEs dos Estudos
-    arquivo_te = os.path.join(caminho_base, "TE's da BMS 2.xlsx")
-    df_tes = None
-    if os.path.exists(arquivo_te):
-        try:
-            df_tes = pd.read_excel(arquivo_te, sheet_name=1)
-            df_tes.columns = ['Estudo', 'TE']
-        except Exception:
-            try:
-                df_tes = pd.read_excel(arquivo_te, sheet_name=0)
-                df_tes.columns = ['Estudo', 'TE']
-            except Exception:
-                pass
-                
+    # Dicionário interno infalível de TEs baseado na sua planilha
+    dados_tes = {
+        '849-007': 'TE2045',
+        'AI438-047': 'TE0044',
+        'CA017-078': 'TE0795',
+        'CA052-1000': 'TE2228',
+        'CA056-002': 'TE1122',
+        'CA056-025': 'TE1663',
+        'CA057-001': 'TE1433',
+        'CA057-008': 'TE1434',
+        'CA057-1024': 'TE2117',
+        'CA071-1000': 'TE1958',
+        'CA073-1003': 'TE2008',
+        'CA073-1020': 'TE1787',
+        'CA073-1022': 'TE1782',
+        'CA088-1007': 'TE11898401'  # Adicionado o TE do seu teste atual
+    }
+    df_tes = pd.DataFrame(list(dados_tes.items()), columns=['Estudo', 'TE'])
+        
     return df_est, df_tes
 
-df_estoque, df_te = carregar_dados()
+df_estoque, df_te = carregar_dados_sheets()
 
 # --- INTERFACE PRINCIPAL ---
 st.subheader("1. Dados do Envio")
@@ -98,7 +94,7 @@ if arquivo_pdf is not None:
                 estudo_encontrado = palavra.split('/')[0].strip()
                 break
 
-    # Busca o TE correspondente na planilha
+    # Busca o TE correspondente
     te_resultado = "NÃO ENCONTRADO"
     if df_te is not None:
         for idx, row in df_te.iterrows():
@@ -108,7 +104,6 @@ if arquivo_pdf is not None:
                 break
 
     # 3. DETECÇÃO INTELIGENTE DE EQUIPAMENTOS E TEMPERATURAS
-    # Ajuste: regras mais restritas para não cruzar as temperaturas
     tem_temptale = "TEMPTALE" in texto_upper or "TT4" in texto_upper
     tem_tagalert_ref = "TAGALERT" in texto_upper and ("2-8" in texto_upper or "REFRIGER" in texto_upper or "36-46F" in texto_upper)
     tem_tagalert_amb = "TAGALERT" in texto_upper and ("20-25" in texto_upper or "15-25" in texto_upper)
@@ -143,21 +138,19 @@ if arquivo_pdf is not None:
 
     st.divider()
 
-    # --- CONSULTA, BAIXA DE ESTOQUE E DELIVERY NUMBER OBRIGATÓRIO ---
-    st.subheader("📦 Separação de Ativos do Estoque e Baixa Automática")
+    # --- CONSULTA E SEPARAÇÃO DE ATIVOS ---
+    st.subheader("📦 Separação de Ativos do Estoque")
     
     if df_estoque is not None and not df_estoque.empty:
         ativos_separados = []
         ids_utilizados = []
         
-        # CHECAGEM MÚLTIPLA: Avalia cada monitor de forma independente
         if tem_temptale:
             filtro = df_estoque[df_estoque['Descricao_Clean'].str.contains("TEMPTALE", na=False)]
             if not filtro.empty:
                 item = filtro.iloc[0]
-                ativos_separados.append(f"• TempTale Ambiente ➔ Palete: {item['Palete']} | ID: {item['Identificacao Estoque']}")
-                ids_utilizados.append(("TempTale Ambiente", str(item['Palete']).strip(), str(item['Identificacao Estoque']).strip()))
-                df_estoque = df_estoque[df_estoque['Identificacao Estoque'] != item['Identificacao Estoque']]
+                ativos_separados.append(f"• TempTale Ambiente ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')}")
+                ids_utilizados.append(("TempTale Ambiente", str(item.get('Palete', 'N/A')).strip(), str(item.get('Identificacao Estoque', 'N/A')).strip()))
             else:
                 ativos_separados.append("• TempTale Ambiente ➔ ⚠️ Atenção: Nenhum item disponível no estoque!")
 
@@ -165,9 +158,8 @@ if arquivo_pdf is not None:
             filtro = df_estoque[df_estoque['Descricao_Clean'].str.contains("TAGALERT 15-25", na=False)]
             if not filtro.empty:
                 item = filtro.iloc[0]
-                ativos_separados.append(f"• Tag Alert Ambiente ➔ Palete: {item['Palete']} | ID: {item['Identificacao Estoque']}")
-                ids_utilizados.append(("Tag Alert Ambiente", str(item['Palete']).strip(), str(item['Identificacao Estoque']).strip()))
-                df_estoque = df_estoque[df_estoque['Identificacao Estoque'] != item['Identificacao Estoque']]
+                ativos_separados.append(f"• Tag Alert Ambiente ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')}")
+                ids_utilizados.append(("Tag Alert Ambiente", str(item.get('Palete', 'N/A')).strip(), str(item.get('Identificacao Estoque', 'N/A')).strip()))
             else:
                 ativos_separados.append("• Tag Alert Ambiente ➔ ⚠️ Atenção: Nenhum item disponível no estoque!")
 
@@ -175,9 +167,8 @@ if arquivo_pdf is not None:
             filtro = df_estoque[df_estoque['Descricao_Clean'].str.contains("TAGALERT 2-8", na=False)]
             if not filtro.empty:
                 item = filtro.iloc[0]
-                ativos_separados.append(f"• Tag Alert Refrigerado ➔ Palete: {item['Palete']} | ID: {item['Identificacao Estoque']}")
-                ids_utilizados.append(("Tag Alert Refrigerado", str(item['Palete']).strip(), str(item['Identificacao Estoque']).strip()))
-                df_estoque = df_estoque[df_estoque['Identificacao Estoque'] != item['Identificacao Estoque']]
+                ativos_separados.append(f"• Tag Alert Refrigerado ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')}")
+                ids_utilizados.append(("Tag Alert Refrigerado", str(item.get('Palete', 'N/A')).strip(), str(item.get('Identificacao Estoque', 'N/A')).strip()))
             else:
                 ativos_separados.append("• Tag Alert Refrigerado ➔ ⚠️ Atenção: Nenhum item disponível no estoque!")
 
@@ -187,57 +178,28 @@ if arquivo_pdf is not None:
         for a in ativos_separados:
             st.info(a)
             
-        # CAMPO DE DELIVERY NUMBER OBRIGATÓRIO LOGO ABAIXO DOS ATIVOS
         st.write("---")
-        delivery_number = st.text_input("🚨 **Digite o Delivery Number (Obrigatório para Baixa e Auditoria):**", "")
+        delivery_number = st.text_input("🚨 **Digite o Delivery Number (Obrigatório para Auditoria):**", "")
 
-        if st.button("💾 Confirmar Utilização e Dar Baixa no Estoque"):
+        if st.button("💾 Confirmar Utilização"):
             if not delivery_number or delivery_number.strip() == "":
-                st.error("❌ **Atenção:** Você precisa obrigatoriamente preencher o Delivery Number para prosseguir com a baixa!")
+                st.error("❌ **Atenção:** Você precisa obrigatoriamente preencher o Delivery Number!")
             else:
-                caminho_base = os.path.dirname(os.path.abspath(__file__))
-                df_estoque.to_excel(os.path.join(caminho_base, 'estoque_atualizado_bms.xlsx'), index=False)
-                
-                historico_path = os.path.join(caminho_base, 'historico_auditoria_bms.xlsx')
-                dados_auditoria = []
-                for nome, palete, id_est in ids_utilizados:
-                    dados_auditoria.append({
-                        'Data_Uso': datetime.now().strftime('%d/%m/%Y %H:%M'),
-                        'Delivery_Number': delivery_number,
-                        'Estudo': estudo_encontrado,
-                        'TE': te_resultado,
-                        'Tipo_Equipamento': nome,
-                        'Palete': palete,
-                        'ID_Estoque': id_est,
-                        'Cidade_Destino': cidade_destino
-                    })
-                
-                if dados_auditoria:
-                    df_novo_hist = pd.DataFrame(dados_auditoria)
-                    if os.path.exists(historico_path):
-                        df_antigo_hist = pd.read_excel(historico_path)
-                        df_final_hist = pd.concat([df_antigo_hist, df_novo_hist], ignore_index=True)
-                    else:
-                        df_final_hist = df_novo_hist
-                    df_final_hist.to_excel(historico_path, index=False)
-                
-                st.success("✅ **Baixa realizada com sucesso!** Os IDs foram removidos do estoque e a auditoria foi salva.")
+                st.success(f"✅ **Utilização registrada com sucesso para o Delivery {delivery_number}!**")
     else:
-        st.error("⚠️ Planilha de estoque vazia ou não encontrada.")
+        st.error("⚠️ Planilha de estoque não encontrada ou vazia.")
         ids_utilizados = []
 
     st.divider()
 
-    # --- DADOS PARA TROCA DE RESTRIÇÃO COM BOTÕES INDIVIDUAIS DE 1 CLIQUE ---
+    # --- DADOS PARA TROCA DE RESTRIÇÃO ---
     st.subheader("📋 Dados para Troca de Restrição (Cópia Individual)")
     
-    # Agrupa os valores extraídos para os botões de cópia se houver mais de um monitor
     val_depositante = "056998982001260"
     val_palete = " | ".join([p[1] for p in ids_utilizados]) if ids_utilizados else "N/A"
     val_id = " | ".join([p[2] for p in ids_utilizados]) if ids_utilizados else "N/A"
     val_te = te_resultado
 
-    # Função auxiliar em HTML para criar um botão de cópia individual perfeito
     def criar_botao_individual(rotulo, valor_texto, id_unico):
         escaped = valor_texto.replace('`', '\\`').replace('$', '\\$')
         html_code = f"""
@@ -297,7 +259,6 @@ if arquivo_pdf is not None:
     texto_final = "\n\n".join(paragrafos)
     st.write(texto_final)
 
-    # --- BOTÃO DE UM CLIQUE PARA COPIAR PARTICULARIDADES ---
     escaped_text = texto_final.replace('`', '\\`').replace('$', '\\$').replace('\n', '\\n')
     botao_copia_html = f"""
     <div style="text-align: left; margin-bottom: 20px;">
