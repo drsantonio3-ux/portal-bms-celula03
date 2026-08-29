@@ -30,13 +30,19 @@ def somar_dias_uteis(data_inicio, dias):
         dias_adicionados += 1
     return data_atual
 
-# --- CARREGAR DADOS DO GOOGLE SHEETS (ESTOQUE) E TABELA DE TES INTERNA ---
+# --- CARREGAR DADOS DO GOOGLE SHEETS (ESTOQUE E TEs) ---
 @st.cache_data(ttl=5)
 def carregar_dados_sheets():
     id_estoque = "10f18RZ-48HiJS2HckG6Siw2WRE9zz92_Pj6chkTwXik"
+    id_loggers = "1ztZC3s0kKINJLNOR-BEYUUFjycxSVT7NMGVNWdxWh98"
+    
     url_estoque = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv"
+    # Link direcionado especificamente para a aba de TEs usando o seu gid exato
+    url_tes = f"https://docs.google.com/spreadsheets/d/{id_loggers}/export?format=csv&gid=536812026"
     
     df_est = None
+    df_tes = None
+    
     try:
         df_est = pd.read_csv(url_estoque)
     except Exception:
@@ -45,24 +51,13 @@ def carregar_dados_sheets():
     if df_est is not None:
         df_est['Descricao_Clean'] = df_est['Descricao'].astype(str).str.upper()
 
-    # Dicionário interno infalível de TEs baseado na sua planilha
-    dados_tes = {
-        '849-007': 'TE2045',
-        'AI438-047': 'TE0044',
-        'CA017-078': 'TE0795',
-        'CA052-1000': 'TE2228',
-        'CA056-002': 'TE1122',
-        'CA056-025': 'TE1663',
-        'CA057-001': 'TE1433',
-        'CA057-008': 'TE1434',
-        'CA057-1024': 'TE2117',
-        'CA071-1000': 'TE1958',
-        'CA073-1003': 'TE2008',
-        'CA073-1020': 'TE1787',
-        'CA073-1022': 'TE1782',
-        'CA088-1007': 'TE11898401'  # Adicionado o TE do seu teste atual
-    }
-    df_tes = pd.DataFrame(list(dados_tes.items()), columns=['Estudo', 'TE'])
+    try:
+        df_tes = pd.read_csv(url_tes)
+        if len(df_tes.columns) >= 2:
+            df_tes = df_tes.iloc[:, [0, 1]]
+            df_tes.columns = ['Estudo', 'TE']
+    except Exception:
+        df_tes = None
         
     return df_est, df_tes
 
@@ -94,7 +89,7 @@ if arquivo_pdf is not None:
                 estudo_encontrado = palavra.split('/')[0].strip()
                 break
 
-    # Busca o TE correspondente
+    # Busca o TE correspondente direto na planilha do Google Sheets (Aba TEs)
     te_resultado = "NÃO ENCONTRADO"
     if df_te is not None:
         for idx, row in df_te.iterrows():
