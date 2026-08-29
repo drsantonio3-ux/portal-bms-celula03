@@ -4,12 +4,13 @@ import pandas as pd
 from datetime import datetime, timedelta
 import streamlit.components.v1 as components
 import re
-import io
+import urllib.request
+import json
 
 # --- CONFIGURAÇÕES DA PÁGINA ---
 st.set_page_config(page_title="Portal BMS - Célula 03", layout="centered")
 st.title("📦 Automação Total BMS - Célula 03")
-st.write("Leitura de Packing List, SLA, Baixa de Estoque e Auditoria")
+st.write("Leitura de Packing List, SLA, Baixa de Estoque e Auditoria Automática")
 
 # --- FERIADOS E CALENDÁRIO ---
 FERIADOS = [datetime(2026, 9, 7).date()]
@@ -180,35 +181,35 @@ if arquivo_pdf is not None:
             if not delivery_number or delivery_number.strip() == "":
                 st.error("❌ **Atenção:** Você precisa obrigatoriamente preencher o Delivery Number!")
             else:
-                # Monta o DataFrame de Auditoria da Operação
-                dados_auditoria = []
+                # Envio automático para a aba Auditoria via Apps Script
+                url_script = "https://script.google.com/macros/s/AKfycbzpwZC2LW7PQ1JGMkJIZD3Rxd4nv4pfEZ1QS1D9jDxQbt4Qf2hiCmv9dJ8pAJnBHJglug/exec"
+                sucesso_envio = True
+                
                 for nome, palete, id_est in ids_utilizados:
-                    dados_auditoria.append({
-                        'Data_Uso': datetime.now().strftime('%d/%m/%Y %H:%M'),
-                        'Delivery_Number': delivery_number,
-                        'Estudo': estudo_encontrado,
-                        'TE': te_resultado,
-                        'Tipo_Equipamento': nome,
-                        'Palete': palete,
-                        'ID_Estoque': id_est,
-                        'Cidade_Destino': cidade_destino
-                    })
-                df_auditoria_atual = pd.DataFrame(dados_auditoria)
+                    payload = {
+                        "data_uso": datetime.now().strftime('%d/%m/%Y %H:%M'),
+                        "delivery_number": str(delivery_number),
+                        "estudo": str(estudo_encontrado),
+                        "te": str(te_resultado),
+                        "tipo_equipamento": str(nome),
+                        "palete": str(palete),
+                        "id_estoque": str(id_est),
+                        "cidade_destino": str(cidade_destino)
+                    }
+                    try:
+                        req = urllib.request.Request(
+                            url_script,
+                            data=json.dumps(payload).encode('utf-8'),
+                            headers={'Content-Type': 'application/json'}
+                        )
+                        urllib.request.urlopen(req, timeout=5)
+                    except Exception as e:
+                        sucesso_envio = False
                 
-                st.success(f"✅ **Utilização registrada com sucesso para o Delivery {delivery_number}!**")
-                
-                # Botão para baixar a planilha de auditoria preenchida instantaneamente
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df_auditoria_atual.to_excel(writer, index=False, sheet_name='Auditoria')
-                processed_data = output.getvalue()
-                
-                st.download_button(
-                    label="📥 Baixar Registro de Auditoria desta Baixa (Excel)",
-                    data=processed_data,
-                    file_name=f"Auditoria_Delivery_{delivery_number}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                if sucesso_envio:
+                    st.success(f"✅ **Utilização registrada com sucesso para o Delivery {delivery_number}!** Os dados foram salvos automaticamente na aba de Auditoria.")
+                else:
+                    st.warning(f"⚠️ **Delivery {delivery_number} confirmado**, mas houve uma falha de conexão ao salvar na aba Auditoria.")
     else:
         st.error("⚠️ Planilha de estoque não encontrada ou vazia.")
         ids_utilizados = []
