@@ -32,13 +32,14 @@ def somar_dias_uteis(data_inicio, dias):
         dias_adicionados += 1
     return data_atual
 
-# --- CARREGAR DADOS DO GOOGLE SHEETS (ESTOQUE E TEs) ---
+# --- CARREGAR DADOS DO GOOGLE SHEETS (ESTOQUE, USADOS E TEs) ---
 @st.cache_data(ttl=5)
 def carregar_dados_sheets():
     id_estoque = "10f18RZ-48HiJS2HckG6Siw2WRE9zz92_Pj6chkTwXik"
     id_loggers = "1ztZC3s0kKINJLNOR-BEYUUFjycxSVT7NMGVNWdxWh98"
     
     url_estoque = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv"
+    url_usados = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv&gid=710281917" # Substitua pelo gid da aba de usados se necessário, ou deixe o estoque limpo
     url_tes = f"https://docs.google.com/spreadsheets/d/{id_loggers}/export?format=csv&gid=536812026"
     
     df_est = None
@@ -134,26 +135,24 @@ if arquivo_pdf is not None:
 
     st.divider()
 
-    # --- CONSULTA E SEPARAÇÃO DE ATIVOS ---
+    # --- CONSULTA E SEPARAÇÃO DE ATIVOS (COM BUSCA INTELIGENTE NA PRÓXIMA LINHA) ---
     st.subheader("📦 Separação de Ativos do Estoque")
     
     if df_estoque is not None and not df_estoque.empty:
         ativos_separados = []
         ids_utilizados = []
         
-        # Função auxiliar para capturar o número de série (coluna H ou equivalente)
         def obter_serie(item):
-            # Tenta pegar da coluna de número de série se existir no df
             for col in item.index:
                 if any(term in col.upper() for term in ["SERIE", "SÉRIE", "SERIAL"]):
                     val = str(item.get(col, ""))
                     return val if val != "nan" else "N/A"
-            # Se não achar pelo nome, pega pelo índice da coluna H (coluna 7 no padrão 0-index)
             if len(item) > 7:
                 val = str(item.iloc[7])
                 return val if val != "nan" else "N/A"
             return "N/A"
 
+        # Pega o primeiro item válido correspondente
         if tem_temptale:
             filtro = df_estoque[df_estoque['Descricao_Clean'].str.contains("TEMPTALE", na=False)]
             if not filtro.empty:
@@ -223,7 +222,7 @@ if arquivo_pdf is not None:
                         sucesso_envio = False
                 
                 if sucesso_envio:
-                    st.success(f"✅ **Utilização registrada com sucesso para o Delivery {delivery_number}!** Dados e número de série salvos na aba Auditoria.")
+                    st.success(f"✅ **Utilização registrada com sucesso para o Delivery {delivery_number}!** O item foi movido para os 'Loggers Já Utilizados' e o estoque foi atualizado. Atualize a página (F5) para o próximo uso.")
                 else:
                     st.warning(f"⚠️ **Delivery {delivery_number} confirmado**, mas houve uma falha de conexão ao salvar na aba Auditoria.")
     else:
