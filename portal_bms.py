@@ -4,13 +4,12 @@ import pandas as pd
 from datetime import datetime, timedelta
 import streamlit.components.v1 as components
 import re
-import urllib.request
-import urllib.parse
+import io
 
 # --- CONFIGURAÇÕES DA PÁGINA ---
 st.set_page_config(page_title="Portal BMS - Célula 03", layout="centered")
 st.title("📦 Automação Total BMS - Célula 03")
-st.write("Leitura de Packing List, SLA, Baixa de Estoque e Copias Individuais (Google Sheets)")
+st.write("Leitura de Packing List, SLA, Baixa de Estoque e Auditoria")
 
 # --- FERIADOS E CALENDÁRIO ---
 FERIADOS = [datetime(2026, 9, 7).date()]
@@ -181,8 +180,35 @@ if arquivo_pdf is not None:
             if not delivery_number or delivery_number.strip() == "":
                 st.error("❌ **Atenção:** Você precisa obrigatoriamente preencher o Delivery Number!")
             else:
-                # Simula o registro de auditoria e exibe confirmação
-                st.success(f"✅ **Utilização registrada com sucesso para o Delivery {delivery_number}!** Os loggers utilizados foram registrados na aba de Auditoria.")
+                # Monta o DataFrame de Auditoria da Operação
+                dados_auditoria = []
+                for nome, palete, id_est in ids_utilizados:
+                    dados_auditoria.append({
+                        'Data_Uso': datetime.now().strftime('%d/%m/%Y %H:%M'),
+                        'Delivery_Number': delivery_number,
+                        'Estudo': estudo_encontrado,
+                        'TE': te_resultado,
+                        'Tipo_Equipamento': nome,
+                        'Palete': palete,
+                        'ID_Estoque': id_est,
+                        'Cidade_Destino': cidade_destino
+                    })
+                df_auditoria_atual = pd.DataFrame(dados_auditoria)
+                
+                st.success(f"✅ **Utilização registrada com sucesso para o Delivery {delivery_number}!**")
+                
+                # Botão para baixar a planilha de auditoria preenchida instantaneamente
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df_auditoria_atual.to_excel(writer, index=False, sheet_name='Auditoria')
+                processed_data = output.getvalue()
+                
+                st.download_button(
+                    label="📥 Baixar Registro de Auditoria desta Baixa (Excel)",
+                    data=processed_data,
+                    file_name=f"Auditoria_Delivery_{delivery_number}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
     else:
         st.error("⚠️ Planilha de estoque não encontrada ou vazia.")
         ids_utilizados = []
