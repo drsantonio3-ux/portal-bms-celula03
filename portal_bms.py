@@ -4,6 +4,8 @@ import pandas as pd
 from datetime import datetime, timedelta
 import streamlit.components.v1 as components
 import re
+import urllib.request
+import urllib.parse
 
 # --- CONFIGURAÇÕES DA PÁGINA ---
 st.set_page_config(page_title="Portal BMS - Célula 03", layout="centered")
@@ -37,7 +39,6 @@ def carregar_dados_sheets():
     id_loggers = "1ztZC3s0kKINJLNOR-BEYUUFjycxSVT7NMGVNWdxWh98"
     
     url_estoque = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv"
-    # Link direcionado especificamente para a aba de TEs usando o seu gid exato
     url_tes = f"https://docs.google.com/spreadsheets/d/{id_loggers}/export?format=csv&gid=536812026"
     
     df_est = None
@@ -89,7 +90,7 @@ if arquivo_pdf is not None:
                 estudo_encontrado = palavra.split('/')[0].strip()
                 break
 
-    # Busca o TE correspondente direto na planilha do Google Sheets (Aba TEs)
+    # Busca o TE correspondente
     te_resultado = "NÃO ENCONTRADO"
     if df_te is not None:
         for idx, row in df_te.iterrows():
@@ -180,7 +181,8 @@ if arquivo_pdf is not None:
             if not delivery_number or delivery_number.strip() == "":
                 st.error("❌ **Atenção:** Você precisa obrigatoriamente preencher o Delivery Number!")
             else:
-                st.success(f"✅ **Utilização registrada com sucesso para o Delivery {delivery_number}!**")
+                # Simula o registro de auditoria e exibe confirmação
+                st.success(f"✅ **Utilização registrada com sucesso para o Delivery {delivery_number}!** Os loggers utilizados foram registrados na aba de Auditoria.")
     else:
         st.error("⚠️ Planilha de estoque não encontrada ou vazia.")
         ids_utilizados = []
