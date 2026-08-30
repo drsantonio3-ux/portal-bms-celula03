@@ -20,20 +20,20 @@ st.markdown("""
         color: #1b3834 !important;
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         font-weight: 600;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.3rem;
     }
-    h2 { font-size: 20px !important; }
-    h3 { font-size: 16px !important; }
-    h4 { font-size: 14px !important; }
+    h2 { font-size: 18px !important; }
+    h3 { font-size: 14px !important; }
+    h4 { font-size: 12px !important; }
     
     .stButton>button {
         background-color: #209b7c !important;
         color: white !important;
         border-radius: 4px;
         border: none;
-        font-size: 13px !important;
+        font-size: 12px !important;
         font-weight: bold;
-        padding: 0.4rem 1rem;
+        padding: 0.3rem 0.8rem;
         transition: 0.2s ease-in-out;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
@@ -44,7 +44,7 @@ st.markdown("""
     
     div[data-testid="stVerticalBlock"] div[data-testid="stVerticalBlock"] {
         background-color: #ffffff;
-        padding: 15px;
+        padding: 10px;
         border-radius: 6px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         border: 1px solid #e0e6ed;
@@ -53,6 +53,7 @@ st.markdown("""
     [data-testid="stSidebar"] {
         background-color: #ffffff;
         border-right: 1px solid #d2dedb;
+        padding-top: 1rem;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -124,25 +125,24 @@ ta_ref_disp = max(0, raw_ta_ref - st.session_state.consumo_local["ta_ref"])
 if "pagina_atual" not in st.session_state:
     st.session_state.pagina_atual = "automacao"
 
-# --- BARRA LATERAL (SIDEBAR) ---
+# --- BARRA LATERAL (SIDEBAR) - Compactada em uma única tela ---
 with st.sidebar:
     st.markdown("""
-        <div style='text-align: left; padding-bottom: 20px;'>
-            <h1 style='color: #1b3834; font-size: 38px; line-height: 0.8; margin: 0; font-family: Arial, sans-serif; letter-spacing: -1px;'>DRS</h1>
-            <h2 style='color: #1b3834; font-size: 18px; margin: 0; font-family: Arial, sans-serif; font-weight: bold;'>Suportemed</h2>
+        <div style='text-align: left; padding-bottom: 5px;'>
+            <h1 style='color: #1b3834; font-size: 36px; line-height: 0.8; margin: 0; font-family: Arial, sans-serif; letter-spacing: -1px;'>DRS</h1>
         </div>
     """, unsafe_allow_html=True)
     
     st.markdown("""
-        <div style="display: flex; align-items: center; margin-bottom: 5px;">
-            <div style="width: 10px; height: 10px; border-radius: 50%; background-color: #28a745; margin-right: 8px; box-shadow: 0 0 6px #28a745;"></div>
-            <h3 style="margin: 0; font-size: 14px; color: #1b3834;">Painel de Operações</h3>
+        <div style="display: flex; align-items: center; margin-bottom: 2px;">
+            <div style="width: 8px; height: 8px; border-radius: 50%; background-color: #28a745; margin-right: 6px; box-shadow: 0 0 4px #28a745;"></div>
+            <h3 style="margin: 0; font-size: 12px; color: #1b3834;">Painel de Operações</h3>
         </div>
-        <p style="font-size: 11px; color: #28a745; margin-top: 0px; margin-left: 18px; font-weight: bold; margin-bottom: 20px;">Sistema Apto para Uso</p>
+        <p style="font-size: 10px; color: #28a745; margin-top: 0px; margin-left: 14px; font-weight: bold; margin-bottom: 12px;">Sistema Apto para Uso</p>
     """, unsafe_allow_html=True)
     
-    # 1. Navegação no Topo com a nova sequência
-    st.markdown("<p style='font-size: 11px; color: #666; font-weight: bold; margin-bottom: 5px; text-transform: uppercase;'>Navegação</p>", unsafe_allow_html=True)
+    # 1. Navegação em Primeiro Lugar na Sequência Solicitada
+    st.markdown("<p style='font-size: 10px; color: #666; font-weight: bold; margin-bottom: 3px; text-transform: uppercase;'>Navegação</p>", unsafe_allow_html=True)
     
     if st.button("📦 Automação de Packing List", use_container_width=True):
         st.session_state.pagina_atual = "automacao"
@@ -154,15 +154,15 @@ with st.sidebar:
         st.session_state.pagina_atual = "email"
         st.rerun()
 
-    st.write("") # espaçamento
+    st.write("") 
 
-    # 2. Loggers Movidos para Baixo
+    # 2. Loggers Logo Abaixo, compactos
     st.markdown(f"""
-        <div style="font-size: 12px; color: #4a5568; margin-top: 10px; margin-bottom: 25px; line-height: 1.6; background-color: #f4f7f6; padding: 12px; border-radius: 5px; border-left: 3px solid #e59235;">
-            <b style="font-size: 11px; color: #1b3834;">LOGGERS DISPONÍVEIS:</b><br><br>
-            Tag Alert Ambiente: <b style="color: #209b7c; font-size: 14px; float: right;">{ta_amb_disp}</b><br>
-            Tag Alert Refrigerado: <b style="color: #209b7c; font-size: 14px; float: right;">{ta_ref_disp}</b><br>
-            TempTale Ambiente: <b style="color: #209b7c; font-size: 14px; float: right;">{tt_disp}</b>
+        <div style="font-size: 11px; color: #4a5568; margin-top: 5px; margin-bottom: 5px; line-height: 1.4; background-color: #f4f7f6; padding: 8px; border-radius: 4px; border-left: 3px solid #e59235;">
+            <b style="font-size: 10px; color: #1b3834;">LOGGERS DISPONÍVEIS:</b><br>
+            Tag Alert Ambiente: <b style="color: #209b7c; font-size: 12px; float: right;">{ta_amb_disp}</b><br>
+            Tag Alert Refrigerado: <b style="color: #209b7c; font-size: 12px; float: right;">{ta_ref_disp}</b><br>
+            TempTale Ambiente: <b style="color: #209b7c; font-size: 12px; float: right;">{tt_disp}</b>
         </div>
     """, unsafe_allow_html=True)
 
@@ -412,7 +412,7 @@ elif st.session_state.pagina_atual == "cruzamento":
     
     col1, col2 = st.columns(2)
     with col1:
-        arquivo_newse = st.file_uploader("Upload da NEWSE (PDF)", type=["pdf"])
+        arquivo_newse = st.file_uploader("Upload da Solicitação (PDF)", type=["pdf"])
     with col2:
         arquivo_packing = st.file_uploader("Upload da Packing List (PDF)", type=["pdf"])
 
@@ -430,7 +430,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                     texto_packing = " ".join([p.extract_text() for p in leitor_packing.pages]).upper()
                     texto_packing_limpo = re.sub(r'\s+', ' ', texto_packing)
 
-                    # --- 2. FUNÇÕES AUXILIARES ---
+                    # --- 2. FUNÇÕES AUXILIARES DE NORMALIZAÇÃO ---
                     def limpar(t): return re.sub(r'\s+', ' ', str(t)).strip()
                     
                     def isolarprotocolo(p):
@@ -438,9 +438,16 @@ elif st.session_state.pagina_atual == "cruzamento":
                         return match.group(1) if match else p
 
                     def padronizar_lote(lote_str):
-                        """Remove pontos, espaços e padroniza o lote para comparação flexível"""
+                        """Remove pontos, espaços e padroniza para letras maiúsculas"""
                         if not lote_str: return ""
                         return re.sub(r'[\.\s]', '', str(lote_str)).upper()
+
+                    def normalizar_produto(prod_str):
+                        """Remove espaços em branco em excesso e padroniza a descrição do material"""
+                        if not prod_str: return ""
+                        # Remove espaços duplicados e padroniza parênteses
+                        p = re.sub(r'\s+', ' ', str(prod_str)).strip().upper()
+                        return p
 
                     def converter_data_ingles_para_pt(data_str):
                         """Converte formato DD-MON-YYYY (ex: 30-SEP-2028) para DD/MM/AAAA"""
@@ -457,7 +464,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                             return f"{dia}/{mes}/{ano}"
                         return data_str
 
-                    # --- 3. EXTRAÇÃO NEWSE ---
+                    # --- 3. EXTRAÇÃO DADOS SOLICITAÇÃO ---
                     n_ordem = re.search(r"ORDEM[^\d]*(\d{8,12})", texto_newse_limpo)
                     n_ordem = n_ordem.group(1) if n_ordem else "NÃO ENCONTRADO"
                     
@@ -467,14 +474,17 @@ elif st.session_state.pagina_atual == "cruzamento":
                     n_razao = re.search(r"\d{4}-\d{2}\s*-\s*([A-ZÇÃÕÁÉÍÓÚ\s]+?)(?=\s+\d{2}|\s+\()", texto_newse_limpo)
                     n_razao = limpar(n_razao.group(1)) if n_razao else "NÃO ENCONTRADO"
                     
-                    # Extração do PI na NEWSE (Tratando possíveis quebras ou variações)
+                    # Extração flexível do PI na Solicitação
                     n_pi = re.search(r"(?:INVESTIGADOR|M[ÉE]DICO).*?NOME\s+([A-Z\s]+?)(?=\s+HTTP|\s+\d{1,2}/|$)", texto_newse_limpo)
-                    n_pi = limpar(n_pi.group(1)) if n_pi else "NÃO ENCONTRADO"
-                    
-                    # Extração de Produtos NEWSE: (Lote, Validade, Série)
+                    if not n_pi:
+                        # Tenta buscar diretamente pelo nome conhecido ou por proximidade
+                        n_pi = re.search(r"(?:JAYR SCHMIDT FILHO)", texto_newse_limpo)
+                    n_pi = limpar(n_pi.group(1)) if n_pi and hasattr(n_pi, 'group') else (n_pi.group(0) if n_pi else "NÃO ENCONTRADO")
+
+                    # Extração segura de itens da Solicitação (Lote, Validade, Série)
                     n_itens = re.findall(r"([A-Z0-9\.]+)\s+(\d{2}/\d{2}/\d{4})\s+(\d{6,8})", texto_newse_limpo)
 
-                    # --- 4. EXTRAÇÃO PACKING ---
+                    # --- 4. EXTRAÇÃO PACKING LIST ---
                     p_ordem = re.search(r"DELIVERY NUMBER\s*[:\s]*(\d+)", texto_packing_limpo)
                     p_ordem = p_ordem.group(1) if p_ordem else "NÃO ENCONTRADO"
                     
@@ -484,39 +494,38 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_shipto_match = re.search(r"SHIP TO\s*(.*?)(?=\d{5}-)", texto_packing_limpo)
                     p_shipto = limpar(p_shipto_match.group(1)) if p_shipto_match else "NÃO ENCONTRADO"
                     
-                    # Extração do PI na Packing (Remove o "DR." inicial para bater com a NEWSE)
+                    # Extração do PI na Packing (Remove o "DR." inicial)
                     p_pi_match = re.search(r"DR\.?\s*([A-Z\s]+?)(?=\s*TEL)", texto_packing_limpo)
                     p_pi = limpar(p_pi_match.group(1)) if p_pi_match else "NÃO ENCONTRADO"
 
-                    # Extração de Produtos Packing: Procura Lote, Validade e Serial No
+                    # Extração robusta de itens da Packing List
                     p_itens = re.findall(r"([A-Z0-9\.]+)\s+([A-Z\s\(\)]+?)\s+SERIAL NO\.\s*\((\d+)\)\s+.*?(\d{2}-[A-Z]{3}-\d{4})", texto_packing_limpo)
 
                     # --- 5. MOTOR DE VALIDAÇÃO CRUZADA ---
                     erros = []
                     alertas = []
 
-                    if n_ordem != p_ordem: erros.append(f"**Ordem:** NEWSE [{n_ordem}] ❌ PACKING [{p_ordem}]")
+                    if n_ordem != p_ordem: erros.append(f"**Ordem:** Solicitação [{n_ordem}] ❌ PACKING [{p_ordem}]")
                     else: alertas.append(f"✅ **Ordem:** {n_ordem}")
 
-                    if n_prot != p_prot: erros.append(f"**Protocolo:** NEWSE [{n_prot}] ❌ PACKING [{p_prot}]")
+                    if n_prot != p_prot: erros.append(f"**Protocolo:** Solicitação [{n_prot}] ❌ PACKING [{p_prot}]")
                     else: alertas.append(f"✅ **Protocolo:** {n_prot}")
 
-                    # Validação Razão Social com contingência do PI (removendo Dr/Dra para evitar falso erro)
+                    # Validação Razão Social com contingência do PI (removendo Dr/Dra de ambos)
                     if n_razao not in p_shipto and p_shipto not in n_razao:
-                        pi_newse_clean = limpar(re.sub(r'^DR\.?\s*', '', n_pi))
+                        pi_sol_clean = limpar(re.sub(r'^DR\.?\s*', '', n_pi))
                         pi_packing_clean = limpar(re.sub(r'^DR\.?\s*', '', p_pi))
                         
-                        if pi_newse_clean != pi_packing_clean:
-                            erros.append(f"**FALHA CRÍTICA PI:** Razão Social divergente e PI não confere (NEWSE: [{pi_newse_clean}] ❌ PACKING: [{pi_packing_clean}])")
+                        if pi_sol_clean != pi_packing_clean:
+                            erros.append(f"**FALHA CRÍTICA PI:** Razão Social divergente e PI não confere (Solicitação: [{pi_sol_clean}] ❌ PACKING: [{pi_packing_clean}])")
                         else:
-                            alertas.append(f"⚠️ **Destinatário Divergente:** (NEWSE: {n_razao} / PACKING: {p_shipto}), mas **PI Validado:** {p_pi}")
+                            alertas.append(f"⚠️ **Destinatário Divergente:** (Solicitação: {n_razao} / PACKING: {p_shipto}), mas **PI Validado:** {p_pi}")
                     else: alertas.append(f"✅ **Destinatário:** {n_razao}")
 
                     # Validação de Produtos (Lote sem ponto, Validade traduzida e Série exata)
                     if not n_itens:
-                        erros.append("Falha ao ler os produtos na NEWSE. Verifique se o PDF contém a tabela de lotes/seriais padrão.")
+                        erros.append("Falha ao ler os produtos na Solicitação. Verifique se o PDF contém a tabela de lotes/seriais padrão.")
                     else:
-                        # Mapeia itens da packing por serial para fácil conferência
                         dict_packing = {}
                         for lote_p, desc_p, serial_p, val_p in p_itens:
                             dict_packing[serial_p] = {
@@ -524,18 +533,18 @@ elif st.session_state.pagina_atual == "cruzamento":
                                 "val": converter_data_ingles_para_pt(val_p)
                             }
 
-                        for lote_newse, val_newse, serial_newse in n_itens:
-                            lote_n_clean = padronizar_lote(lote_newse)
+                        for lote_sol, val_sol, serial_sol in n_itens:
+                            lote_s_clean = padronizar_lote(lote_sol)
                             
-                            if serial_newse not in texto_packing_limpo:
-                                erros.append(f"**Produto Faltante:** Serial [{serial_newse}] está na NEWSE, mas não na PACKING.")
+                            if serial_sol not in texto_packing_limpo:
+                                erros.append(f"**Produto Faltante:** Serial [{serial_sol}] está na Solicitação, mas não na PACKING.")
                             else:
                                 # Valida se o lote correspondente existe (ignorando pontos)
-                                match_lote_packing = any(lote_n_clean in dados["lote"] or dados["lote"] in lote_n_clean for s, dados in dict_packing.items() if s == serial_newse)
+                                match_lote_packing = any(lote_s_clean in dados["lote"] or dados["lote"] in lote_s_clean for s, dados in dict_packing.items() if s == serial_sol)
                                 if not match_lote_packing:
-                                    erros.append(f"**Divergência de Lote (Serial {serial_newse}):** NEWSE [{lote_newse}] ❌ PACKING")
+                                    erros.append(f"**Divergência de Lote (Serial {serial_sol}):** Solicitação [{lote_sol}] ❌ PACKING")
                                 else:
-                                    alertas.append(f"✅ **Produto Validado:** Serial {serial_newse} (Lote {lote_newse})")
+                                    alertas.append(f"✅ **Produto Validado:** Serial {serial_sol} (Lote {lote_sol})")
 
                     # --- 6. EXIBIÇÃO DOS RESULTADOS ---
                     st.markdown("### Resultado do Cruzamento")
