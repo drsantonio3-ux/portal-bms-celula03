@@ -7,8 +7,8 @@ import re
 import urllib.request
 import json
 
-# --- CONFIGURAÇÕES DA PÁGINA & IDENTIDADE VISUAL DRS ---
-st.set_page_config(page_title="Portal BMS - Célula 03 | DRS", layout="centered", page_icon="📦")
+# --- CONFIGURAÇÕES DA PÁGINA & IDENTIDADE VISUAL DRS (LAYOUT WIDE) ---
+st.set_page_config(page_title="Portal BMS - Célula 03 | DRS", layout="wide", page_icon="📦")
 
 # Injetando CSS customizado com a identidade visual DRS (Verde Petróleo, Verde Água e Laranja)
 st.markdown("""
@@ -73,7 +73,17 @@ def verificar_senha():
 if not verificar_senha():
     st.stop()
 
-# --- TOPO COM A CARA DA DRS ---
+# --- BARRA LATERAL (SIDEBAR) COM IDENTIDADE DRS ---
+with st.sidebar:
+    st.markdown("<h2 style='color: #209b7c; margin-bottom: 0;'>DRS Group</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='color: #e59235; font-weight: bold; margin-top: 0;'>Suportedmed</p>", unsafe_allow_html=True)
+    st.markdown("---")
+    st.markdown("### 🟢 Painel de Controle")
+    st.info("Célula 03 ativa e operando em ambiente corporativo seguro.")
+    st.markdown("---")
+    st.markdown("<p style='font-size: 11px; color: #666;'>Sistema interno de leitura de Packing List, SLA e Auditoria de Estoque.</p>", unsafe_allow_html=True)
+
+# --- TOPO PRINCIPAL ---
 st.markdown("""
     <div style="background: linear-gradient(135deg, #1b3834 0%, #209b7c 100%); padding: 25px; border-radius: 10px; color: white; margin-bottom: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
         <h1 style="color: white !important; margin: 0; font-size: 28px;">📦 DRS Group — Automação Total BMS</h1>
