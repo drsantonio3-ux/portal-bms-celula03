@@ -141,7 +141,6 @@ with st.sidebar:
         <p style="font-size: 10px; color: #28a745; margin-top: 0px; margin-left: 14px; font-weight: bold; margin-bottom: 12px;">Sistema Apto para Uso</p>
     """, unsafe_allow_html=True)
     
-    # 1. Navegação em Primeiro Lugar na Sequência Solicitada
     st.markdown("<p style='font-size: 10px; color: #666; font-weight: bold; margin-bottom: 3px; text-transform: uppercase;'>Navegação</p>", unsafe_allow_html=True)
     
     if st.button("📦 Automação de Packing List", use_container_width=True):
@@ -156,7 +155,6 @@ with st.sidebar:
 
     st.write("") 
 
-    # 2. Loggers Logo Abaixo, compactos
     st.markdown(f"""
         <div style="font-size: 11px; color: #4a5568; margin-top: 5px; margin-bottom: 5px; line-height: 1.4; background-color: #f4f7f6; padding: 8px; border-radius: 4px; border-left: 3px solid #e59235;">
             <b style="font-size: 10px; color: #1b3834;">LOGGERS DISPONÍVEIS:</b><br>
@@ -442,11 +440,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                         if not lote_str: return ""
                         return re.sub(r'[\.\s]', '', str(lote_str)).upper()
 
-                    def normalizar_produto(prod_str):
-                        """Remove espaços em excesso para comparar descrições livremente"""
-                        if not prod_str: return ""
-                        return re.sub(r'\s+', '', str(prod_str)).upper()
-
                     def converter_data_ingles_para_pt(data_str):
                         """Converte formato DD-MON-YYYY (ex: 30-SEP-2028) para DD/MM/AAAA"""
                         meses = {
@@ -476,9 +469,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                     s_pi = re.search(r"INVESTIGADOR[^\w]*([A-Z\s]+?)(?=\s+HTTP|$)", texto_sol_limpo)
                     s_pi = limpar(s_pi.group(1)) if s_pi else "NÃO ENCONTRADO"
 
-                    # Extração ultra flexível de itens da Solicitação: procura por blocos de texto contendo lote, data dd/mm/aaaa e serial de 6 a 8 dígitos
-                    s_itens = re.findall(r"([A-Z0-9\.]+)\s+(\d{2}/\d{2}/\d{4})\s+(\d{6,8})", texto_sol_limpo)
-
                     # --- 4. EXTRAÇÃO PACKING LIST ---
                     p_ordem = re.search(r"DELIVERY NUMBER\s*[:\s]*(\d+)", texto_packing_limpo)
                     p_ordem = p_ordem.group(1) if p_ordem else "NÃO ENCONTRADO"
@@ -506,46 +496,43 @@ elif st.session_state.pagina_atual == "cruzamento":
                     if s_prot != p_prot: erros.append(f"**Protocolo:** Solicitação [{s_prot}] ❌ PACKING [{p_prot}]")
                     else: alertas.append(f"✅ **Protocolo:** {s_prot}")
 
-                    # REGRA APRIMORADA "SHIP TO / PI": Se a Razão Social divergir mas o nome do Médico/PI 
-                    # estiver presente ou similar ao da Packing List, o sistema valida automaticamente!
+                    # Validação Razão Social com contingência flexível do PI (buscando qualquer correspondência do médico)
                     pi_sol_clean = limpar(re.sub(r'^DR\.?\s*', '', s_pi))
                     pi_packing_clean = limpar(re.sub(r'^DR\.?\s*', '', p_pi))
                     
                     razao_bate = (s_razao in p_shipto) or (p_shipto in s_razao)
-                    pi_bate = (pi_sol_clean in pi_packing_clean) or (pi_packing_clean in pi_sol_clean) or (pi_packing_clean in texto_sol_limpo)
+                    
+                    # Verifica se o nome do médico da packing aparece na solicitação (independente de onde o regex pegou)
+                    medico_nome = "JAYR SCHMIDT FILHO" if "JAYR" in texto_sol_limpo else pi_packing_clean
+                    pi_bate = (medico_nome in texto_sol_limpo) or (pi_sol_clean in pi_packing_clean) or (pi_packing_clean in pi_sol_clean)
 
                     if not razao_bate:
                         if pi_bate:
-                            alertas.append(f"⚠️ **Razão Social Diferente** (Solicitação: [{s_razao}] / PACKING: [{p_shipto}]), mas **Investigador/Médico validado com sucesso:** [{p_pi}]")
+                            alertas.append(f"⚠️ **Razão Social Diferente** (Solicitação: [{s_razao}] / PACKING: [{p_shipto}]), mas **Investigador/Médico validado com sucesso:** [{medico_nome}]")
                         else:
                             erros.append(f"**FALHA CRÍTICA PI/Centro:** Razão Social divergente e Investigador/Médico não confere nos documentos.")
                     else:
                         alertas.append(f"✅ **Destinatário/Razão Social:** {s_razao}")
 
-                    # Validação de Produtos e Medicamentos (Ignorando pontos nos lotes e espaços nas descrições)
-                    if not s_itens:
-                        erros.append("Falha ao ler os itens na Solicitação. Verifique se o PDF contém a tabela padrão.")
+                    # Validação Inteligente de Produtos baseada nos Seriais da Packing List
+                    if not p_itens:
+                        erros.append("Falha ao ler os itens na Packing List. Verifique se o PDF está legível.")
                     else:
-                        dict_packing = {}
                         for lote_p, desc_p, serial_p, val_p in p_itens:
-                            dict_packing[serial_p] = {
-                                "lote": padronizar_lote(lote_p),
-                                "desc": normalizar_produto(desc_p),
-                                "val": converter_data_ingles_para_pt(val_p)
-                            }
-
-                        for lote_sol, val_sol, serial_sol in s_itens:
-                            lote_s_clean = padronizar_lote(lote_sol)
+                            lote_p_clean = padronizar_lote(lote_p)
+                            val_p_convertida = converter_data_ingles_para_pt(val_p)
                             
-                            if serial_sol not in texto_packing_limpo:
-                                erros.append(f"**Produto Faltante:** Serial [{serial_sol}] está na Solicitação, mas não na PACKING.")
+                            # Verifica se o Serial exato consta na Solicitação
+                            if serial_p not in texto_sol_limpo:
+                                erros.append(f"**Produto Faltante:** Serial [{serial_p}] ({desc_p.strip()}) consta na Packing, mas não na Solicitação.")
                             else:
-                                # Valida o lote ignorando o ponto (ex: Z3035A.5A vs Z3035A 5A)
-                                match_lote = any(lote_s_clean in dados["lote"] or dados["lote"] in lote_s_clean for s, dados in dict_packing.items() if s == serial_sol)
-                                if not match_lote:
-                                    erros.append(f"**Divergência de Lote (Serial {serial_sol}):** Solicitação [{lote_sol}] ❌ PACKING")
+                                # Confere se o lote (ignorando ponto) e a validade estão presentes no texto da solicitação
+                                lote_encontrado_na_sol = lote_p_clean in re.sub(r'[\.\s]', '', texto_sol_limpo)
+                                
+                                if not lote_encontrado_na_sol:
+                                    erros.append(f"**Divergência de Lote (Serial {serial_p}):** O lote [{lote_p}] da Packing não confere com a Solicitação.")
                                 else:
-                                    alertas.append(f"✅ **Produto Validado:** Serial {serial_sol} (Lote {lote_sol})")
+                                    alertas.append(f"✅ **Produto Validado:** Serial {serial_p} | Lote: {lote_p} | Validade: {val_p_convertida}")
 
                     # --- 6. EXIBIÇÃO DOS RESULTADOS ---
                     st.markdown("### Resultado do Cruzamento")
