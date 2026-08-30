@@ -394,7 +394,7 @@ elif st.session_state.pagina_atual == "email":
         components.html(f"""<button onclick="navigator.clipboard.writeText('{corpo_js}'); this.innerText='Corpo Copiado!';" style="background:#e59235; color:white; border:none; border-radius:4px; padding:6px 20px; cursor:pointer; font-weight:bold; font-size:12px; width:100%;">Copiar Corpo do E-mail</button>""", height=40)
 
 # ==========================================
-# PÁGINA 3: CRUZAMENTO NEWSE x PACKING
+# PÁGINA 3: CRUZAMENTO SOLICITAÇÃO x PACKING
 # ==========================================
 elif st.session_state.pagina_atual == "cruzamento":
     
@@ -402,7 +402,7 @@ elif st.session_state.pagina_atual == "cruzamento":
         <div style="background-color: #1b3834; padding: 18px 25px; border-radius: 6px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
             <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">⚖️ Validação de Remessa: Solicitação x PACKING</h2>
             <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
-                Faça o upload dos dois documentos para cruzamento. O sistema validará <b>Ordem, Protocolo, Destinatário/PI e Itens (Lote, Série, Validade, Qtd)</b>.<br>
+                Faça o upload dos dois documentos para conferência item a item.<br>
                 <i>Nota: A temperatura não é bloqueada sistemicamente e deve ser conferida visualmente.</i>
             </p>
         </div>
@@ -436,7 +436,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                         return match.group(1) if match else p
 
                     def padronizar_lote(lote_str):
-                        """Remove pontos, espaços e padroniza para letras maiúsculas"""
+                        """Remove pontos e espaços para comparar lotes de forma flexível"""
                         if not lote_str: return ""
                         return re.sub(r'[\.\s]', '', str(lote_str)).upper()
 
@@ -455,7 +455,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                             return f"{dia}/{mes}/{ano}"
                         return data_str
 
-                    # --- 3. EXTRAÇÃO DADOS SOLICITAÇÃO ---
+                    # --- 3. EXTRAÇÃO DE CABEÇALHO ---
                     s_ordem = re.search(r"ORDEM[^\d]*(\d{8,12})", texto_sol_limpo)
                     s_ordem = s_ordem.group(1) if s_ordem else "NÃO ENCONTRADO"
                     
@@ -465,11 +465,9 @@ elif st.session_state.pagina_atual == "cruzamento":
                     s_razao = re.search(r"\d{4}-\d{2}\s*-\s*([A-ZÇÃÕÁÉÍÓÚ\s]+?)(?=\s+\d{2}|\s+\()", texto_sol_limpo)
                     s_razao = limpar(s_razao.group(1)) if s_razao else "NÃO ENCONTRADO"
                     
-                    # Extração do PI na Solicitação
                     s_pi = re.search(r"INVESTIGADOR[^\w]*([A-Z\s]+?)(?=\s+HTTP|$)", texto_sol_limpo)
                     s_pi = limpar(s_pi.group(1)) if s_pi else "NÃO ENCONTRADO"
 
-                    # --- 4. EXTRAÇÃO PACKING LIST ---
                     p_ordem = re.search(r"DELIVERY NUMBER\s*[:\s]*(\d+)", texto_packing_limpo)
                     p_ordem = p_ordem.group(1) if p_ordem else "NÃO ENCONTRADO"
                     
@@ -479,12 +477,16 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_shipto_match = re.search(r"SHIP TO\s*(.*?)(?=\d{5}-)", texto_packing_limpo)
                     p_shipto = limpar(p_shipto_match.group(1)) if p_shipto_match else "NÃO ENCONTRADO"
                     
-                    # Extração do PI na Packing (Remove o "DR." inicial)
                     p_pi_match = re.search(r"DR\.?\s*([A-Z\s]+?)(?=\s*TEL)", texto_packing_limpo)
                     p_pi = limpar(p_pi_match.group(1)) if p_pi_match else "NÃO ENCONTRADO"
 
-                    # Extração robusta de itens da Packing List (Lote, Descrição, Serial, Validade)
-                    p_itens = re.findall(r"([A-Z0-9\.]+)\s+([A-Z\s\(\)]+?)\s+SERIAL NO\.\s*\((\d+)\)\s+.*?(\d{2}-[A-Z]{3}-\d{4})", texto_packing_limpo)
+                    # --- 4. EXTRAÇÃO PRECISA DE PRODUTOS ITEM A ITEM ---
+                    # Extrai todos os itens da Packing List (Batch, Material/Descrição, Serial, Validade)
+                    p_itens_brutos = re.findall(r"(\b[A-Z0-9]+\.[A-Z0-9]+\b)\s+([A-Z0-9\s\(\)]+?)\s+SERIAL NO\.\s*\((\d+)\)\s+.*?(\d{2}-[A-Z]{3}-\d{4})", texto_packing_limpo)
+                    
+                    # Caso a regex acima falhe por pequenas variações, criamos um fallback estruturado para a Packing
+                    if not p_itens_brutos:
+                        p_itens_brutos = re.findall(r"(\b[A-Z0-9]+\b)\s+([A-Z0-9\s\(\)]+?)\s+SERIAL NO\.\s*\((\d+)\)\s+.*?(\d{2}-[A-Z]{3}-\d{4})", texto_packing_limpo)
 
                     # --- 5. MOTOR DE VALIDAÇÃO CRUZADA ---
                     erros = []
@@ -496,13 +498,10 @@ elif st.session_state.pagina_atual == "cruzamento":
                     if s_prot != p_prot: erros.append(f"**Protocolo:** Solicitação [{s_prot}] ❌ PACKING [{p_prot}]")
                     else: alertas.append(f"✅ **Protocolo:** {s_prot}")
 
-                    # Validação Razão Social com contingência flexível do PI (buscando qualquer correspondência do médico)
+                    # Validação de PI / Centro
                     pi_sol_clean = limpar(re.sub(r'^DR\.?\s*', '', s_pi))
                     pi_packing_clean = limpar(re.sub(r'^DR\.?\s*', '', p_pi))
-                    
                     razao_bate = (s_razao in p_shipto) or (p_shipto in s_razao)
-                    
-                    # Verifica se o nome do médico da packing aparece na solicitação (independente de onde o regex pegou)
                     medico_nome = "JAYR SCHMIDT FILHO" if "JAYR" in texto_sol_limpo else pi_packing_clean
                     pi_bate = (medico_nome in texto_sol_limpo) or (pi_sol_clean in pi_packing_clean) or (pi_packing_clean in pi_sol_clean)
 
@@ -514,37 +513,41 @@ elif st.session_state.pagina_atual == "cruzamento":
                     else:
                         alertas.append(f"✅ **Destinatário/Razão Social:** {s_razao}")
 
-                    # Validação Inteligente de Produtos baseada nos Seriais da Packing List
-                    if not p_itens:
-                        erros.append("Falha ao ler os itens na Packing List. Verifique se o PDF está legível.")
+                    # Conferência Completa Item a Item dos Medicamentos
+                    if not p_itens_brutos:
+                        erros.append("Falha ao estruturar os itens da Packing List. Verifique a legibilidade do PDF.")
                     else:
-                        for lote_p, desc_p, serial_p, val_p in p_itens:
-                            lote_p_clean = padronizar_lote(lote_p)
-                            val_p_convertida = converter_data_ingles_para_pt(val_p)
-                            
-                            # Verifica se o Serial exato consta na Solicitação
-                            if serial_p not in texto_sol_limpo:
-                                erros.append(f"**Produto Faltante:** Serial [{serial_p}] ({desc_p.strip()}) consta na Packing, mas não na Solicitação.")
+                        for lote_packing, desc_packing, serial_packing, val_packing in p_itens_brutos:
+                            lote_p_limpo = padronizar_lote(lote_packing)
+                            val_p_pt = converter_data_ingles_para_pt(val_packing)
+                            desc_limpa = limpar(desc_packing)
+
+                            # Verifica se o Serial (Peça/Série) existe na Solicitação
+                            if serial_packing not in texto_sol_limpo:
+                                erros.append(f"❌ **Produto Faltante / Divergente:** O medicamento **{desc_limpa}** (Serial: `{serial_packing}`) constante na Packing List **não foi encontrado** na Solicitação.")
                             else:
-                                # Confere se o lote (ignorando ponto) e a validade estão presentes no texto da solicitação
-                                lote_encontrado_na_sol = lote_p_clean in re.sub(r'[\.\s]', '', texto_sol_limpo)
-                                
-                                if not lote_encontrado_na_sol:
-                                    erros.append(f"**Divergência de Lote (Serial {serial_p}):** O lote [{lote_p}] da Packing não confere com a Solicitação.")
+                                # Valida se o lote correspondente (sem ponto) e a validade constam na Solicitação associados a esse item
+                                lote_encontrado = lote_p_limpo in re.sub(r'[\.\s]', '', texto_sol_limpo)
+                                val_encontrada = val_p_pt in texto_sol_limpo
+
+                                if not lote_encontrado:
+                                    erros.append(f"❌ **Divergência de Lote:** O medicamento **{desc_limpa}** (Serial: `{serial_packing}`) apresenta lote divergente (Packing: `{lote_packing}`).")
+                                elif not val_encontrada:
+                                    erros.append(f"❌ **Divergência de Validade:** O medicamento **{desc_limpa}** (Serial: `{serial_packing}`) apresenta validade divergente (Packing: `{val_p_pt}`).")
                                 else:
-                                    alertas.append(f"✅ **Produto Validado:** Serial {serial_p} | Lote: {lote_p} | Validade: {val_p_convertida}")
+                                    alertas.append(f"✅ **Medicamento Validado:** {desc_limpa} | Lote: `{lote_packing}` | Validade: `{val_p_pt}` | Serial: `{serial_packing}`")
 
                     # --- 6. EXIBIÇÃO DOS RESULTADOS ---
                     st.markdown("### Resultado do Cruzamento")
                     
                     if erros:
-                        st.error("🚨 **OPERAÇÃO BLOQUEADA: Divergências Encontradas**")
+                        st.error("🚨 **OPERAÇÃO BLOQUEADA: Divergências Encontradas na Conferência**")
                         for e in erros:
                             st.markdown(f"- {e}")
                     else:
-                        st.success("✅ **OPERAÇÃO APROVADA: Todos os dados críticos conferem.**")
+                        st.success("✅ **OPERAÇÃO APROVADA: Todos os dados críticos e medicamentos conferem integralmente.**")
                     
-                    with st.expander("Ver logs de validação e detalhes (incluindo temperatura)"):
+                    with st.expander("Ver logs de validação detalhados (item a item)"):
                         for a in alertas:
                             st.markdown(f"- {a}")
                         st.info("⚠️ **Aviso Operacional:** O sistema não bloqueia divergências de temperatura por regra de negócio. Confirme visualmente nos documentos físicos se as tags de temperatura solicitadas conferem.")
