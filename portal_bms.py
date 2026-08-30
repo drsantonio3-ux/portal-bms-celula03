@@ -16,7 +16,6 @@ st.markdown("""
     <style>
     .stApp { background-color: #f4f7f9; }
     
-    /* Ajuste de tamanho de fontes para não ficarem gigantes */
     h1, h2, h3, h4, h5, h6 {
         color: #1b3834 !important;
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -43,7 +42,6 @@ st.markdown("""
         color: #e59235 !important;
     }
     
-    /* Paineis brancos mais enxutos */
     div[data-testid="stVerticalBlock"] div[data-testid="stVerticalBlock"] {
         background-color: #ffffff;
         padding: 15px;
@@ -135,7 +133,6 @@ with st.sidebar:
         </div>
     """, unsafe_allow_html=True)
     
-    # Bolinha Verde de Status Online
     st.markdown("""
         <div style="display: flex; align-items: center; margin-bottom: 5px;">
             <div style="width: 10px; height: 10px; border-radius: 50%; background-color: #28a745; margin-right: 8px; box-shadow: 0 0 6px #28a745;"></div>
@@ -162,7 +159,6 @@ with st.sidebar:
         st.session_state.pagina_atual = "email"
         st.rerun()
 
-# --- FUNÇÃO PARA CRIAR CARDS MENORES E BONITOS ---
 def card_metrica(titulo, valor):
     return f"""
     <div style="background-color: #ffffff; padding: 12px 15px; border-radius: 6px; border: 1px solid #e0e6ed; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
@@ -177,7 +173,6 @@ def card_metrica(titulo, valor):
 
 if st.session_state.pagina_atual == "automacao":
     
-    # --- CABEÇALHO DO SISTEMA PREENCHIDO ---
     st.markdown("""
         <div style="background-color: #1b3834; padding: 18px 25px; border-radius: 6px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
             <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">📦 Automação de Packing List (SLA e Estoque)</h2>
@@ -240,12 +235,11 @@ if st.session_state.pagina_atual == "automacao":
 
         st.success("✅ Documento processado com sucesso.")
         
-        # Cards de Métrica Customizados (Substituindo o antigo tamanho gigante)
         c1, c2, c3 = st.columns(3)
         with c1: st.markdown(card_metrica("Destino", cidade_destino), unsafe_allow_html=True)
         with c2: st.markdown(card_metrica("Protocolo / Estudo", estudo_encontrado), unsafe_allow_html=True)
         with c3: st.markdown(card_metrica("TE Correspondente", te_resultado), unsafe_allow_html=True)
-        st.write("") # Espaçamento
+        st.write("") 
 
         st.markdown("### 📦 Separação e Baixa de Estoque")
         ids_utilizados = []
@@ -317,7 +311,6 @@ if st.session_state.pagina_atual == "automacao":
 # ==========================================
 elif st.session_state.pagina_atual == "email":
     
-    # --- CABEÇALHO DO SISTEMA PREENCHIDO ---
     st.markdown("""
         <div style="background-color: #1b3834; padding: 18px 25px; border-radius: 6px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
             <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">📧 Gerador de E-mail (Goods Receipt)</h2>
@@ -340,16 +333,33 @@ elif st.session_state.pagina_atual == "email":
         cesv = c2.text_input("CESV:", placeholder="2601001993")
         
         st.markdown("#### 2. Itens do Recebimento")
-        if 'tabela_itens' not in st.session_state:
-            st.session_state.tabela_itens = pd.DataFrame([{"DESCRIPTION": "", "BATCH": "", "EXP_DATE": "", "QUANTITY": ""}])
         
-        df_itens = st.data_editor(st.session_state.tabela_itens, num_rows="dynamic", use_container_width=True, hide_index=True)
+        # --- NOVO FORMATO DE ITENS EM BLOCOS (EMPILHADOS) ---
+        if 'num_itens' not in st.session_state:
+            st.session_state.num_itens = 1
+            
+        def add_item():
+            st.session_state.num_itens += 1
+
+        df_itens_list = []
+        for i in range(st.session_state.num_itens):
+            st.markdown(f"<p style='font-size:12px; font-weight:bold; color:#209b7c; margin-bottom:0;'>ITEM {i+1}</p>", unsafe_allow_html=True)
+            desc = st.text_input("DESCRIPTION:", key=f"desc_{i}")
+            
+            c_b, c_e, c_q = st.columns(3)
+            batch = c_b.text_input("BATCH:", key=f"batch_{i}")
+            exp = c_e.text_input("EXP_DATE:", key=f"exp_{i}")
+            qty = c_q.text_input("QUANTITY:", key=f"qty_{i}")
+            
+            st.write("") # Pequeno espaçamento entre os itens
+            df_itens_list.append({"desc": desc, "batch": batch, "exp": exp, "qty": qty})
+            
+        st.button("➕ Adicionar Novo Item", on_click=add_item)
     
     with col_preview:
         st.markdown("#### 3. Destinatários (To / CC)")
         lista_emails = "BMSOPSBLA@BMS.COM; Radu.Ciobanescu@bms.com; laura.sourwine@bms.com; cso.distribution@bms.com; MG-BRZ-IMPORT-CTA@bms.com; daniela.mizushima@bms.com; Giovana.Doretto2@bms.com"
         
-        # Estilização menor para a área de emails
         st.markdown(f"<div style='background:#f8fafc; padding:8px; font-size:12px; border:1px solid #e2e8f0; border-radius:4px; font-family:monospace; color:#475569;'>{lista_emails}</div>", unsafe_allow_html=True)
         components.html(f"""<button onclick="navigator.clipboard.writeText('{lista_emails}'); this.innerText='Copiado!';" style="background:#209b7c; color:white; border:none; border-radius:4px; padding:4px 12px; cursor:pointer; font-weight:bold; font-size:11px; margin-top:5px; margin-bottom:15px;">Copiar Destinatários</button>""", height=35)
         
@@ -366,11 +376,11 @@ elif st.session_state.pagina_atual == "email":
         
         corpo_email += "DESCRIPTION | BATCH NUMBER | EXP. DATE | QUANTITY\n"
         corpo_email += "-"*60 + "\n"
-        for idx, row in df_itens.iterrows():
-            d = row.get("DESCRIPTION", "")
-            b = row.get("BATCH", "")
-            e = row.get("EXP_DATE", "")
-            q = row.get("QUANTITY", "")
+        for row in df_itens_list:
+            d = row.get("desc", "")
+            b = row.get("batch", "")
+            e = row.get("exp", "")
+            q = row.get("qty", "")
             if any([d, b, e, q]): 
                 corpo_email += f"{d} | {b} | {e} | {q}\n"
 
