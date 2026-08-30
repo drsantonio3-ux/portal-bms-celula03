@@ -402,7 +402,7 @@ elif st.session_state.pagina_atual == "cruzamento":
         <div style="background-color: #1b3834; padding: 18px 25px; border-radius: 6px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
             <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">⚖️ Validação de Remessa: Solicitação x PACKING</h2>
             <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
-                Faça o upload dos dois documentos para conferência item a item.<br>
+                Faça o upload dos dois documentos para conferência item a item dos medicamentos, lotes, validades e seriais.<br>
                 <i>Nota: A temperatura não é bloqueada sistemicamente e deve ser conferida visualmente.</i>
             </p>
         </div>
@@ -481,12 +481,11 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_pi = limpar(p_pi_match.group(1)) if p_pi_match else "NÃO ENCONTRADO"
 
                     # --- 4. EXTRAÇÃO PRECISA DE PRODUTOS ITEM A ITEM ---
-                    # Extrai todos os itens da Packing List (Batch, Material/Descrição, Serial, Validade)
-                    p_itens_brutos = re.findall(r"(\b[A-Z0-9]+\.[A-Z0-9]+\b)\s+([A-Z0-9\s\(\)]+?)\s+SERIAL NO\.\s*\((\d+)\)\s+.*?(\d{2}-[A-Z]{3}-\d{4})", texto_packing_limpo)
+                    # Extração estruturada baseada na Packing List: Procura por Lotes, Descrições de Medicamentos, Seriais e Validades
+                    p_itens_brutos = re.findall(r"(\b[A-Z0-9]+\.[A-Z0-9]+\b)\s+([A-Z0-9\s\(\)]+?)\s+SERIAL NO\.\s*\((\d{6,8})\)\s+.*?(\d{2}-[A-Z]{3}-\d{4})", texto_packing_limpo)
                     
-                    # Caso a regex acima falhe por pequenas variações, criamos um fallback estruturado para a Packing
                     if not p_itens_brutos:
-                        p_itens_brutos = re.findall(r"(\b[A-Z0-9]+\b)\s+([A-Z0-9\s\(\)]+?)\s+SERIAL NO\.\s*\((\d+)\)\s+.*?(\d{2}-[A-Z]{3}-\d{4})", texto_packing_limpo)
+                        p_itens_brutos = re.findall(r"(\b[A-Z0-9]+\b)\s+([A-Z0-9\s\(\)]+?)\s+SERIAL NO\.\s*\((\d{6,8})\)\s+.*?(\d{2}-[A-Z]{3}-\d{4})", texto_packing_limpo)
 
                     # --- 5. MOTOR DE VALIDAÇÃO CRUZADA ---
                     erros = []
@@ -513,27 +512,28 @@ elif st.session_state.pagina_atual == "cruzamento":
                     else:
                         alertas.append(f"✅ **Destinatário/Razão Social:** {s_razao}")
 
-                    # Conferência Completa Item a Item dos Medicamentos
+                    # Conferência Completa Item a Item dos Medicamentos (Validando Nome, Lote, Validade e Serial exatos)
                     if not p_itens_brutos:
-                        erros.append("Falha ao estruturar os itens da Packing List. Verifique a legibilidade do PDF.")
+                        erros.append("❌ Falha ao estruturar os itens da Packing List. Verifique a legibilidade do PDF.")
                     else:
                         for lote_packing, desc_packing, serial_packing, val_packing in p_itens_brutos:
                             lote_p_limpo = padronizar_lote(lote_packing)
                             val_p_pt = converter_data_ingles_para_pt(val_packing)
                             desc_limpa = limpar(desc_packing)
 
-                            # Verifica se o Serial (Peça/Série) existe na Solicitação
+                            # 1. Valida se o Serial exato está presente na Solicitação
                             if serial_packing not in texto_sol_limpo:
-                                erros.append(f"❌ **Produto Faltante / Divergente:** O medicamento **{desc_limpa}** (Serial: `{serial_packing}`) constante na Packing List **não foi encontrado** na Solicitação.")
+                                erros.append(f"❌ **Produto Faltante:** O medicamento **{desc_limpa}** (Serial: `{serial_packing}`) não foi encontrado na Solicitação.")
                             else:
-                                # Valida se o lote correspondente (sem ponto) e a validade constam na Solicitação associados a esse item
+                                # 2. Valida se o lote específico daquele item (ignorando pontos) consta no documento de solicitação
                                 lote_encontrado = lote_p_limpo in re.sub(r'[\.\s]', '', texto_sol_limpo)
+                                # 3. Valida se a validade convertida consta na solicitação
                                 val_encontrada = val_p_pt in texto_sol_limpo
 
                                 if not lote_encontrado:
-                                    erros.append(f"❌ **Divergência de Lote:** O medicamento **{desc_limpa}** (Serial: `{serial_packing}`) apresenta lote divergente (Packing: `{lote_packing}`).")
+                                    erros.append(f"❌ **Divergência de Lote:** O medicamento **{desc_limpa}** (Serial: `{serial_packing}`) está com o lote incorreto (Registrado: `{lote_packing}`).")
                                 elif not val_encontrada:
-                                    erros.append(f"❌ **Divergência de Validade:** O medicamento **{desc_limpa}** (Serial: `{serial_packing}`) apresenta validade divergente (Packing: `{val_p_pt}`).")
+                                    erros.append(f"❌ **Divergência de Validade:** O medicamento **{desc_limpa}** (Serial: `{serial_packing}`) está com a validade incorreta (Registrada: `{val_p_pt}`).")
                                 else:
                                     alertas.append(f"✅ **Medicamento Validado:** {desc_limpa} | Lote: `{lote_packing}` | Validade: `{val_p_pt}` | Serial: `{serial_packing}`")
 
