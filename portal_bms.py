@@ -158,6 +158,12 @@ with st.sidebar:
     if st.button("📧 Gerador de E-mail (GR)", use_container_width=True):
         st.session_state.pagina_atual = "email"
         st.rerun()
+    # ==========================================
+    # NOVO BOTÃO INSERIDO AQUI
+    # ==========================================
+    if st.button("⚖️ Cruzamento NEWSE x PACKING", use_container_width=True):
+        st.session_state.pagina_atual = "cruzamento"
+        st.rerun()
 
 def card_metrica(titulo, valor):
     return f"""
@@ -334,7 +340,6 @@ elif st.session_state.pagina_atual == "email":
         
         st.markdown("#### 2. Itens do Recebimento")
         
-        # --- NOVO FORMATO DE ITENS EM BLOCOS (EMPILHADOS) ---
         if 'num_itens' not in st.session_state:
             st.session_state.num_itens = 1
             
@@ -388,3 +393,30 @@ elif st.session_state.pagina_atual == "email":
         
         corpo_js = corpo_email.replace('\n', '\\n').replace("'", "\\'")
         components.html(f"""<button onclick="navigator.clipboard.writeText('{corpo_js}'); this.innerText='Corpo Copiado!';" style="background:#e59235; color:white; border:none; border-radius:4px; padding:6px 20px; cursor:pointer; font-weight:bold; font-size:12px; width:100%;">Copiar Corpo do E-mail</button>""", height=40)
+
+# ==========================================
+# NOVA PÁGINA 3: CRUZAMENTO NEWSE X PACKING
+# ==========================================
+elif st.session_state.pagina_atual == "cruzamento":
+    
+    st.markdown("""
+        <div style="background-color: #1b3834; padding: 18px 25px; border-radius: 6px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">⚖️ Validação de Remessa: NEWSE x PACKING</h2>
+            <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
+                Faça o upload dos dois documentos para cruzamento. O sistema validará <b>Ordem, Protocolo, Destinatário/PI e Itens (Lote, Série, Validade, Qtd)</b>.<br>
+                <i>Nota: A temperatura não é bloqueada sistemicamente e deve ser conferida visualmente.</i>
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        arquivo_newse = st.file_uploader("Upload da NEWSE (PDF)", type=["pdf"])
+    with col2:
+        arquivo_packing = st.file_uploader("Upload da Packing List (PDF)", type=["pdf"])
+
+    if arquivo_newse and arquivo_packing:
+        st.divider()
+        if st.button("Executar Cruzamento de Dados", use_container_width=True):
+            st.info("Arquivos recebidos! A interface está pronta.")
+            st.success("Próximo passo: A lógica de leitura (PyPDF2 ou pdfplumber) e o motor de validação serão integrados aqui na sequência.")
