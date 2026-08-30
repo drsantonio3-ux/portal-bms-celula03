@@ -158,9 +158,6 @@ with st.sidebar:
     if st.button("📧 Gerador de E-mail (GR)", use_container_width=True):
         st.session_state.pagina_atual = "email"
         st.rerun()
-    # ==========================================
-    # NOVO BOTÃO INSERIDO AQUI
-    # ==========================================
     if st.button("⚖️ Cruzamento NEWSE x PACKING", use_container_width=True):
         st.session_state.pagina_atual = "cruzamento"
         st.rerun()
@@ -423,90 +420,76 @@ elif st.session_state.pagina_atual == "cruzamento":
                     # --- 1. LEITURA BRUTA DOS PDFs ---
                     leitor_newse = PyPDF2.PdfReader(arquivo_newse)
                     texto_newse = " ".join([p.extract_text() for p in leitor_newse.pages]).upper()
+                    texto_newse_limpo = re.sub(r'\s+', ' ', texto_newse)
                     
                     leitor_packing = PyPDF2.PdfReader(arquivo_packing)
                     texto_packing = " ".join([p.extract_text() for p in leitor_packing.pages]).upper()
+                    texto_packing_limpo = re.sub(r'\s+', ' ', texto_packing)
 
-                    # --- 2. FUNÇÕES AUXILIARES DE LIMPEZA ---
+                    # --- 2. FUNÇÕES AUXILIARES ---
                     def limpar(t): return re.sub(r'\s+', ' ', str(t)).strip()
                     
                     def isolar_protocolo(p):
                         match = re.search(r'([A-Z0-9]+-[0-9]+)', p)
                         return match.group(1) if match else p
 
-                    # --- 3. EXTRAÇÃO DE DADOS (REGEX) ---
-                    # Dados NEWSE
-                    n_ordem = re.search(r"NUMERO DA ORDEM:\s*(\d+)", texto_newse)
+                    # --- 3. EXTRAÇÃO NEWSE (Com âncoras resistentes ao PyPDF2) ---
+                    n_ordem = re.search(r"ORDEM[^\d]*(\d{8,12})", texto_newse_limpo)
                     n_ordem = n_ordem.group(1) if n_ordem else "NÃO ENCONTRADO"
                     
-                    n_prot = re.search(r"CA\d+-\d+(?:-[A-Z0-9]+)?", texto_newse)
+                    n_prot = re.search(r"CA\d+-\d+(?:-[A-Z0-9]+)?", texto_newse_limpo)
                     n_prot = isolar_protocolo(n_prot.group(0)) if n_prot else "NÃO ENCONTRADO"
                     
-                    n_razao = re.search(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\s*-\s*([A-ZÇÃÕÁÉÍÓÚ\s]+)(?=\s|\|)", texto_newse)
+                    n_razao = re.search(r"\d{4}-\d{2}\s*-\s*([A-ZÇÃÕÁÉÍÓÚ\s]+?)(?=\s+\d{2}|\s+\()", texto_newse_limpo)
                     n_razao = limpar(n_razao.group(1)) if n_razao else "NÃO ENCONTRADO"
                     
-                    n_pi = re.search(r"INVESTIGADOR.*?NOME\s*([A-Z\s]+?)(?:HTTPS|$)", texto_newse)
+                    n_pi = re.search(r"M[ÉE]DICO.*?NOME\s+([A-Z\s]+?)(?=\s+HTTP|\s+\d{1,2}/)", texto_newse_limpo)
                     n_pi = limpar(n_pi.group(1)) if n_pi else "NÃO ENCONTRADO"
                     
-                    # Extração de Lotes e Seriais NEWSE (Procura padrão LOTE | VALIDADE | PEÇA | SÉRIE)
-                    n_seriais = re.findall(r"([A-Z0-9]+(?:\.[A-Z0-9]+)?)\s*\|\s*\d{2}/\d{2}/\d{4}\s*\|\s*\d+\s*\|\s*(\d{5,8})", texto_newse)
+                    n_seriais = re.findall(r"([A-Z0-9]{5,8})\s+\d{2}/\d{2}/\d{4}\s+(\d{6,8})", texto_newse_limpo)
 
-                    # Dados PACKING
-                    p_ordem = re.search(r"DELIVERY NUMBER\s*[:\s]*(\d+)", texto_packing)
+                    # --- 4. EXTRAÇÃO PACKING ---
+                    p_ordem = re.search(r"DELIVERY NUMBER\s*[:\s]*(\d+)", texto_packing_limpo)
                     p_ordem = p_ordem.group(1) if p_ordem else "NÃO ENCONTRADO"
                     
-                    p_prot = re.search(r"CA\d+-\d+/[0-9]+", texto_packing)
+                    p_prot = re.search(r"CA\d+-\d+/[0-9]+", texto_packing_limpo)
                     p_prot = isolar_protocolo(p_prot.group(0)) if p_prot else "NÃO ENCONTRADO"
                     
-                    # Pega as primeiras linhas do endereço de entrega como Ship To
-                    p_shipto_match = re.search(r"SHIP TO\s*(.*?)(?=\d{5}-)", texto_packing)
+                    p_shipto_match = re.search(r"SHIP TO\s*(.*?)(?=\d{5}-)", texto_packing_limpo)
                     p_shipto = limpar(p_shipto_match.group(1)) if p_shipto_match else "NÃO ENCONTRADO"
                     
-                    p_pi = re.search(r"DR\.\s*([A-Z\s]+)(?=TEL)", texto_packing)
+                    p_pi = re.search(r"DR\.\s*([A-Z\s]+?)(?=\s*TEL)", texto_packing_limpo)
                     p_pi = limpar(p_pi.group(1)) if p_pi else "NÃO ENCONTRADO"
-                    
-                    # Extração de Lotes e Seriais PACKING (Procura Lote.Sufixo e Serial No)
-                    p_lotes = re.findall(r"([A-Z0-9]{5,8}(?:\.[A-Z0-9]+)?)\s+[A-Z0-9\s\(\)]+SERIAL NO\.\s*\((\d+)\)", texto_packing)
 
-                    # --- 4. MOTOR DE VALIDAÇÃO ---
+                    # --- 5. MOTOR DE VALIDAÇÃO CRUZADA ---
                     erros = []
                     alertas = []
 
-                    # Validar Ordem
-                    if n_ordem != p_ordem:
-                        erros.append(f"**Ordem:** NEWSE [{n_ordem}] ❌ PACKING [{p_ordem}]")
-                    else:
-                        alertas.append(f"✅ **Ordem:** {n_ordem}")
+                    if n_ordem != p_ordem: erros.append(f"**Ordem:** NEWSE [{n_ordem}] ❌ PACKING [{p_ordem}]")
+                    else: alertas.append(f"✅ **Ordem:** {n_ordem}")
 
-                    # Validar Protocolo
-                    if n_prot != p_prot:
-                        erros.append(f"**Protocolo:** NEWSE [{n_prot}] ❌ PACKING [{p_prot}]")
-                    else:
-                        alertas.append(f"✅ **Protocolo:** {n_prot}")
+                    if n_prot != p_prot: erros.append(f"**Protocolo:** NEWSE [{n_prot}] ❌ PACKING [{p_prot}]")
+                    else: alertas.append(f"✅ **Protocolo:** {n_prot}")
 
-                    # Validar Destinatário / PI
                     if n_razao not in p_shipto and p_shipto not in n_razao:
                         if n_pi != p_pi:
                             erros.append(f"**FALHA CRÍTICA PI:** Razão Social divergente e PI não confere (NEWSE: {n_pi} ❌ PACKING: {p_pi})")
                         else:
                             alertas.append(f"⚠️ **Destinatário Divergente:** (NEWSE: {n_razao} / PACKING: {p_shipto}), mas **PI Validado:** {n_pi}")
-                    else:
-                        alertas.append(f"✅ **Destinatário:** {n_razao}")
+                    else: alertas.append(f"✅ **Destinatário:** {n_razao}")
 
-                    # Validar Lotes e Seriais
-                    if not n_seriais or not p_lotes:
-                        erros.append("Falha ao extrair tabela de produtos. A formatação do PDF pode estar corrompida ou diferente do padrão.")
+                    if not n_seriais:
+                        erros.append("Falha ao ler os produtos na NEWSE. Verifique se o PDF contém a tabela de lotes/seriais padrão.")
                     else:
-                        dict_packing = {serial: lote for lote, serial in p_lotes}
                         for lote_newse, serial_newse in n_seriais:
-                            if serial_newse not in dict_packing:
+                            if serial_newse not in texto_packing_limpo:
                                 erros.append(f"**Produto Faltante:** Serial [{serial_newse}] está na NEWSE, mas não na PACKING.")
-                            elif dict_packing[serial_newse] != lote_newse:
-                                erros.append(f"**Divergência de Lote (Serial {serial_newse}):** NEWSE [{lote_newse}] ❌ PACKING [{dict_packing[serial_newse]}]")
+                            elif lote_newse not in texto_packing_limpo:
+                                erros.append(f"**Divergência de Lote no Serial {serial_newse}:** O lote [{lote_newse}] da NEWSE não foi encontrado na Packing List.")
                             else:
-                                alertas.append(f"✅ **Produto Validado:** Serial {serial_newse} (Lote {lote_newse})")
+                                alertas.append(f"✅ **Produto Validado:** Serial {serial_newse} (Lote {lote_newse} confirmado na Packing)")
 
-                    # --- 5. EXIBIÇÃO DOS RESULTADOS ---
+                    # --- 6. EXIBIÇÃO DOS RESULTADOS ---
                     st.markdown("### Resultado do Cruzamento")
                     
                     if erros:
