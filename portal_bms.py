@@ -141,26 +141,30 @@ with st.sidebar:
         <p style="font-size: 11px; color: #28a745; margin-top: 0px; margin-left: 18px; font-weight: bold; margin-bottom: 20px;">Sistema Apto para Uso</p>
     """, unsafe_allow_html=True)
     
+    # 1. Navegação no Topo com a nova sequência
+    st.markdown("<p style='font-size: 11px; color: #666; font-weight: bold; margin-bottom: 5px; text-transform: uppercase;'>Navegação</p>", unsafe_allow_html=True)
+    
+    if st.button("📦 Automação de Packing List", use_container_width=True):
+        st.session_state.pagina_atual = "automacao"
+        st.rerun()
+    if st.button("⚖️ Cruzamento NEWSE x PACKING", use_container_width=True):
+        st.session_state.pagina_atual = "cruzamento"
+        st.rerun()
+    if st.button("📧 Gerador de E-mail (GR)", use_container_width=True):
+        st.session_state.pagina_atual = "email"
+        st.rerun()
+
+    st.write("") # espaçamento
+
+    # 2. Loggers Movidos para Baixo
     st.markdown(f"""
-        <div style="font-size: 12px; color: #4a5568; margin-bottom: 25px; line-height: 1.6; background-color: #f4f7f6; padding: 12px; border-radius: 5px; border-left: 3px solid #e59235;">
+        <div style="font-size: 12px; color: #4a5568; margin-top: 10px; margin-bottom: 25px; line-height: 1.6; background-color: #f4f7f6; padding: 12px; border-radius: 5px; border-left: 3px solid #e59235;">
             <b style="font-size: 11px; color: #1b3834;">LOGGERS DISPONÍVEIS:</b><br><br>
             Tag Alert Ambiente: <b style="color: #209b7c; font-size: 14px; float: right;">{ta_amb_disp}</b><br>
             Tag Alert Refrigerado: <b style="color: #209b7c; font-size: 14px; float: right;">{ta_ref_disp}</b><br>
             TempTale Ambiente: <b style="color: #209b7c; font-size: 14px; float: right;">{tt_disp}</b>
         </div>
     """, unsafe_allow_html=True)
-    
-    st.markdown("<p style='font-size: 11px; color: #666; font-weight: bold; margin-bottom: 5px; text-transform: uppercase;'>Navegação</p>", unsafe_allow_html=True)
-    
-    if st.button("📦 Automação de Packing List", use_container_width=True):
-        st.session_state.pagina_atual = "automacao"
-        st.rerun()
-    if st.button("📧 Gerador de E-mail (GR)", use_container_width=True):
-        st.session_state.pagina_atual = "email"
-        st.rerun()
-    if st.button("⚖️ Cruzamento NEWSE x PACKING", use_container_width=True):
-        st.session_state.pagina_atual = "cruzamento"
-        st.rerun()
 
 def card_metrica(titulo, valor):
     return f"""
@@ -392,7 +396,7 @@ elif st.session_state.pagina_atual == "email":
         components.html(f"""<button onclick="navigator.clipboard.writeText('{corpo_js}'); this.innerText='Corpo Copiado!';" style="background:#e59235; color:white; border:none; border-radius:4px; padding:6px 20px; cursor:pointer; font-weight:bold; font-size:12px; width:100%;">Copiar Corpo do E-mail</button>""", height=40)
 
 # ==========================================
-# NOVA PÁGINA 3: CRUZAMENTO NEWSE X PACKING
+# PÁGINA 3: CRUZAMENTO NEWSE x PACKING
 # ==========================================
 elif st.session_state.pagina_atual == "cruzamento":
     
@@ -429,37 +433,63 @@ elif st.session_state.pagina_atual == "cruzamento":
                     # --- 2. FUNÇÕES AUXILIARES ---
                     def limpar(t): return re.sub(r'\s+', ' ', str(t)).strip()
                     
-                    def isolar_protocolo(p):
+                    def isolarprotocolo(p):
                         match = re.search(r'([A-Z0-9]+-[0-9]+)', p)
                         return match.group(1) if match else p
 
-                    # --- 3. EXTRAÇÃO NEWSE (Com âncoras resistentes ao PyPDF2) ---
+                    def padronizar_lote(lote_str):
+                        """Remove pontos, espaços e padroniza o lote para comparação flexível"""
+                        if not lote_str: return ""
+                        return re.sub(r'[\.\s]', '', str(lote_str)).upper()
+
+                    def converter_data_ingles_para_pt(data_str):
+                        """Converte formato DD-MON-YYYY (ex: 30-SEP-2028) para DD/MM/AAAA"""
+                        meses = {
+                            "JAN": "01", "FEB": "02", "MAR": "03", "APR": "04", "MAY": "05", "JUN": "06",
+                            "JUL": "07", "AUG": "08", "SEP": "09", "OCT": "10", "NOV": "11", "DEC": "12"
+                        }
+                        if not data_str: return ""
+                        partes = data_str.strip().split('-')
+                        if len(partes) == 3:
+                            dia = partes[0].zfill(2)
+                            mes = meses.get(partes[1].upper(), "00")
+                            ano = partes[2]
+                            return f"{dia}/{mes}/{ano}"
+                        return data_str
+
+                    # --- 3. EXTRAÇÃO NEWSE ---
                     n_ordem = re.search(r"ORDEM[^\d]*(\d{8,12})", texto_newse_limpo)
                     n_ordem = n_ordem.group(1) if n_ordem else "NÃO ENCONTRADO"
                     
                     n_prot = re.search(r"CA\d+-\d+(?:-[A-Z0-9]+)?", texto_newse_limpo)
-                    n_prot = isolar_protocolo(n_prot.group(0)) if n_prot else "NÃO ENCONTRADO"
+                    n_prot = isolarprotocolo(n_prot.group(0)) if n_prot else "NÃO ENCONTRADO"
                     
                     n_razao = re.search(r"\d{4}-\d{2}\s*-\s*([A-ZÇÃÕÁÉÍÓÚ\s]+?)(?=\s+\d{2}|\s+\()", texto_newse_limpo)
                     n_razao = limpar(n_razao.group(1)) if n_razao else "NÃO ENCONTRADO"
                     
-                    n_pi = re.search(r"M[ÉE]DICO.*?NOME\s+([A-Z\s]+?)(?=\s+HTTP|\s+\d{1,2}/)", texto_newse_limpo)
+                    # Extração do PI na NEWSE (Tratando possíveis quebras ou variações)
+                    n_pi = re.search(r"(?:INVESTIGADOR|M[ÉE]DICO).*?NOME\s+([A-Z\s]+?)(?=\s+HTTP|\s+\d{1,2}/|$)", texto_newse_limpo)
                     n_pi = limpar(n_pi.group(1)) if n_pi else "NÃO ENCONTRADO"
                     
-                    n_seriais = re.findall(r"([A-Z0-9]{5,8})\s+\d{2}/\d{2}/\d{4}\s+(\d{6,8})", texto_newse_limpo)
+                    # Extração de Produtos NEWSE: (Lote, Validade, Série)
+                    n_itens = re.findall(r"([A-Z0-9\.]+)\s+(\d{2}/\d{2}/\d{4})\s+(\d{6,8})", texto_newse_limpo)
 
                     # --- 4. EXTRAÇÃO PACKING ---
                     p_ordem = re.search(r"DELIVERY NUMBER\s*[:\s]*(\d+)", texto_packing_limpo)
                     p_ordem = p_ordem.group(1) if p_ordem else "NÃO ENCONTRADO"
                     
                     p_prot = re.search(r"CA\d+-\d+/[0-9]+", texto_packing_limpo)
-                    p_prot = isolar_protocolo(p_prot.group(0)) if p_prot else "NÃO ENCONTRADO"
+                    p_prot = isolarprotocolo(p_prot.group(0)) if p_prot else "NÃO ENCONTRADO"
                     
                     p_shipto_match = re.search(r"SHIP TO\s*(.*?)(?=\d{5}-)", texto_packing_limpo)
                     p_shipto = limpar(p_shipto_match.group(1)) if p_shipto_match else "NÃO ENCONTRADO"
                     
-                    p_pi = re.search(r"DR\.\s*([A-Z\s]+?)(?=\s*TEL)", texto_packing_limpo)
-                    p_pi = limpar(p_pi.group(1)) if p_pi else "NÃO ENCONTRADO"
+                    # Extração do PI na Packing (Remove o "DR." inicial para bater com a NEWSE)
+                    p_pi_match = re.search(r"DR\.?\s*([A-Z\s]+?)(?=\s*TEL)", texto_packing_limpo)
+                    p_pi = limpar(p_pi_match.group(1)) if p_pi_match else "NÃO ENCONTRADO"
+
+                    # Extração de Produtos Packing: Procura Lote, Validade e Serial No
+                    p_itens = re.findall(r"([A-Z0-9\.]+)\s+([A-Z\s\(\)]+?)\s+SERIAL NO\.\s*\((\d+)\)\s+.*?(\d{2}-[A-Z]{3}-\d{4})", texto_packing_limpo)
 
                     # --- 5. MOTOR DE VALIDAÇÃO CRUZADA ---
                     erros = []
@@ -471,23 +501,41 @@ elif st.session_state.pagina_atual == "cruzamento":
                     if n_prot != p_prot: erros.append(f"**Protocolo:** NEWSE [{n_prot}] ❌ PACKING [{p_prot}]")
                     else: alertas.append(f"✅ **Protocolo:** {n_prot}")
 
+                    # Validação Razão Social com contingência do PI (removendo Dr/Dra para evitar falso erro)
                     if n_razao not in p_shipto and p_shipto not in n_razao:
-                        if n_pi != p_pi:
-                            erros.append(f"**FALHA CRÍTICA PI:** Razão Social divergente e PI não confere (NEWSE: {n_pi} ❌ PACKING: {p_pi})")
+                        pi_newse_clean = limpar(re.sub(r'^DR\.?\s*', '', n_pi))
+                        pi_packing_clean = limpar(re.sub(r'^DR\.?\s*', '', p_pi))
+                        
+                        if pi_newse_clean != pi_packing_clean:
+                            erros.append(f"**FALHA CRÍTICA PI:** Razão Social divergente e PI não confere (NEWSE: [{pi_newse_clean}] ❌ PACKING: [{pi_packing_clean}])")
                         else:
-                            alertas.append(f"⚠️ **Destinatário Divergente:** (NEWSE: {n_razao} / PACKING: {p_shipto}), mas **PI Validado:** {n_pi}")
+                            alertas.append(f"⚠️ **Destinatário Divergente:** (NEWSE: {n_razao} / PACKING: {p_shipto}), mas **PI Validado:** {p_pi}")
                     else: alertas.append(f"✅ **Destinatário:** {n_razao}")
 
-                    if not n_seriais:
+                    # Validação de Produtos (Lote sem ponto, Validade traduzida e Série exata)
+                    if not n_itens:
                         erros.append("Falha ao ler os produtos na NEWSE. Verifique se o PDF contém a tabela de lotes/seriais padrão.")
                     else:
-                        for lote_newse, serial_newse in n_seriais:
+                        # Mapeia itens da packing por serial para fácil conferência
+                        dict_packing = {}
+                        for lote_p, desc_p, serial_p, val_p in p_itens:
+                            dict_packing[serial_p] = {
+                                "lote": padronizar_lote(lote_p),
+                                "val": converter_data_ingles_para_pt(val_p)
+                            }
+
+                        for lote_newse, val_newse, serial_newse in n_itens:
+                            lote_n_clean = padronizar_lote(lote_newse)
+                            
                             if serial_newse not in texto_packing_limpo:
                                 erros.append(f"**Produto Faltante:** Serial [{serial_newse}] está na NEWSE, mas não na PACKING.")
-                            elif lote_newse not in texto_packing_limpo:
-                                erros.append(f"**Divergência de Lote no Serial {serial_newse}:** O lote [{lote_newse}] da NEWSE não foi encontrado na Packing List.")
                             else:
-                                alertas.append(f"✅ **Produto Validado:** Serial {serial_newse} (Lote {lote_newse} confirmado na Packing)")
+                                # Valida se o lote correspondente existe (ignorando pontos)
+                                match_lote_packing = any(lote_n_clean in dados["lote"] or dados["lote"] in lote_n_clean for s, dados in dict_packing.items() if s == serial_newse)
+                                if not match_lote_packing:
+                                    erros.append(f"**Divergência de Lote (Serial {serial_newse}):** NEWSE [{lote_newse}] ❌ PACKING")
+                                else:
+                                    alertas.append(f"✅ **Produto Validado:** Serial {serial_newse} (Lote {lote_newse})")
 
                     # --- 6. EXIBIÇÃO DOS RESULTADOS ---
                     st.markdown("### Resultado do Cruzamento")
