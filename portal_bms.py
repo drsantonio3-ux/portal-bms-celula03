@@ -9,6 +9,36 @@ import json
 
 # --- CONFIGURAÇÕES DA PÁGINA ---
 st.set_page_config(page_title="Portal BMS - Célula 03", layout="centered")
+
+# --- SISTEMA DE AUTENTICAÇÃO CORPORATIVA ---
+def verificar_senha():
+    """Retorna True se o usuário digitou a senha correta."""
+    def senha_inserida():
+        if st.session_state["password_input"] == st.secrets.get("SENHA_ACESSO", "bms2026"):
+            st.session_state["password_correta"] = True
+            del st.session_state["password_input"]  # Remove a senha da memória por segurança
+        else:
+            st.session_state["password_correta"] = False
+
+    if "password_correta" not in st.session_state:
+        # Tela de Login
+        st.title("🔒 Portal BMS - Célula 03 (Restrito)")
+        st.write("Por favor, insira a senha corporativa para acessar o portal de automação.")
+        st.text_input("Senha de Acesso", type="password", on_change=senha_inserida, key="password_input")
+        return False
+    elif not st.session_state["password_correta"]:
+        st.title("🔒 Portal BMS - Célula 03 (Restrito)")
+        st.text_input("Senha de Acesso", type="password", on_change=senha_inserida, key="password_input")
+        st.error("❌ Senha incorreta. Tente novamente.")
+        return False
+    else:
+        return True
+
+# Se a senha não estiver correta, interrompe a execução do app aqui
+if not verificar_senha():
+    st.stop()
+
+# --- A PARTIR DAQUI É O SEU SISTEMA NORMAL (SÓ RODA SE LOGADO) ---
 st.title("📦 Automação Total BMS - Célula 03")
 st.write("Leitura de Packing List, SLA, Baixa de Estoque e Auditoria Automática")
 
@@ -39,7 +69,7 @@ def carregar_dados_sheets():
     id_loggers = "1ztZC3s0kKINJLNOR-BEYUUFjycxSVT7NMGVNWdxWh98"
     
     url_estoque = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv"
-    url_usados = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv&gid=710281917" # Substitua pelo gid da aba de usados se necessário, ou deixe o estoque limpo
+    url_usados = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv&gid=710281917"
     url_tes = f"https://docs.google.com/spreadsheets/d/{id_loggers}/export?format=csv&gid=536812026"
     
     df_est = None
