@@ -7,8 +7,45 @@ import re
 import urllib.request
 import json
 
-# --- CONFIGURAÇÕES DA PÁGINA ---
-st.set_page_config(page_title="Portal BMS - Célula 03", layout="centered")
+# --- CONFIGURAÇÕES DA PÁGINA & IDENTIDADE VISUAL DRS ---
+st.set_page_config(page_title="Portal BMS - Célula 03 | DRS", layout="centered", page_icon="📦")
+
+# Injetando CSS customizado com a identidade visual DRS (Verde Petróleo, Verde Água e Laranja)
+st.markdown("""
+    <style>
+    /* Cores Globais e Fundo */
+    .stApp {
+        background-color: #f4f7f6;
+    }
+    
+    /* Títulos e Cabeçalhos */
+    h1, h2, h3 {
+        color: #1b3834 !important;
+        font-family: 'Segoe UI', sans-serif;
+    }
+    
+    /* Botões Principais do Streamlit */
+    .stButton>button {
+        background-color: #209b7c !important;
+        color: white !important;
+        border-radius: 6px;
+        border: none;
+        font-weight: bold;
+        padding: 0.5rem 1rem;
+        transition: 0.3s;
+    }
+    .stButton>button:hover {
+        background-color: #1b3834 !important;
+        color: #e59235 !important;
+    }
+    
+    /* Caixas de Alerta e Info */
+    .stAlert {
+        border-radius: 6px;
+        border-left: 5px solid #209b7c;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 # --- SISTEMA DE AUTENTICAÇÃO CORPORATIVA ---
 def verificar_senha():
@@ -16,31 +53,33 @@ def verificar_senha():
     def senha_inserida():
         if st.session_state["password_input"] == st.secrets.get("SENHA_ACESSO", "bms2026"):
             st.session_state["password_correta"] = True
-            del st.session_state["password_input"]  # Remove a senha da memória por segurança
+            del st.session_state["password_input"]
         else:
             st.session_state["password_correta"] = False
 
     if "password_correta" not in st.session_state:
-        # Tela de Login
-        st.title("🔒 Portal BMS - Célula 03 (Restrito)")
+        st.markdown("<h2 style='color: #1b3834;'>🔒 Portal BMS - DRS Célula 03 (Restrito)</h2>", unsafe_allow_html=True)
         st.write("Por favor, insira a senha corporativa para acessar o portal de automação.")
         st.text_input("Senha de Acesso", type="password", on_change=senha_inserida, key="password_input")
         return False
     elif not st.session_state["password_correta"]:
-        st.title("🔒 Portal BMS - Célula 03 (Restrito)")
+        st.markdown("<h2 style='color: #1b3834;'>🔒 Portal BMS - DRS Célula 03 (Restrito)</h2>", unsafe_allow_html=True)
         st.text_input("Senha de Acesso", type="password", on_change=senha_inserida, key="password_input")
         st.error("❌ Senha incorreta. Tente novamente.")
         return False
     else:
         return True
 
-# Se a senha não estiver correta, interrompe a execução do app aqui
 if not verificar_senha():
     st.stop()
 
-# --- A PARTIR DAQUI É O SEU SISTEMA NORMAL (SÓ RODA SE LOGADO) ---
-st.title("📦 Automação Total BMS - Célula 03")
-st.write("Leitura de Packing List, SLA, Baixa de Estoque e Auditoria Automática")
+# --- TOPO COM A CARA DA DRS ---
+st.markdown("""
+    <div style="background: linear-gradient(135deg, #1b3834 0%, #209b7c 100%); padding: 25px; border-radius: 10px; color: white; margin-bottom: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+        <h1 style="color: white !important; margin: 0; font-size: 28px;">📦 DRS Group — Automação Total BMS</h1>
+        <p style="margin: 5px 0 0 0; font-size: 16px; color: #f0f0f0;">Célula 03 | Leitura de Packing List, SLA, Baixa de Estoque e Auditoria Automática</p>
+    </div>
+""", unsafe_allow_html=True)
 
 # --- FERIADOS E CALENDÁRIO ---
 FERIADOS = [datetime(2026, 9, 7).date()]
@@ -62,7 +101,7 @@ def somar_dias_uteis(data_inicio, dias):
         dias_adicionados += 1
     return data_atual
 
-# --- CARREGAR DADOS DO GOOGLE SHEETS (ESTOQUE, USADOS E TEs) ---
+# --- CARREGAR DADOS DO GOOGLE SHEETS ---
 @st.cache_data(ttl=5)
 def carregar_dados_sheets():
     id_estoque = "10f18RZ-48HiJS2HckG6Siw2WRE9zz92_Pj6chkTwXik"
@@ -101,7 +140,6 @@ arquivo_pdf = st.file_uploader("Arraste o PDF da Packing List aqui", type=["pdf"
 data_recebimento = st.date_input("Data de Recebimento da Solicitação", datetime.today())
 
 if arquivo_pdf is not None:
-    # 1. EXTRAÇÃO DE TEXTO DO PDF
     leitor = PyPDF2.PdfReader(arquivo_pdf)
     texto_pdf = ""
     for pagina in leitor.pages:
@@ -109,7 +147,6 @@ if arquivo_pdf is not None:
     
     texto_upper = texto_pdf.upper()
 
-    # 2. EXTRAÇÃO AUTOMÁTICA DO PROTOCOL NUMBER / ESTUDO
     estudo_encontrado = "NÃO IDENTIFICADO"
     match_protocolo = re.search(r"PROTOCOL\s*NUMBER\s*[:\s]*([A-Z0-9\-\/]+)", texto_upper)
     if match_protocolo:
@@ -121,7 +158,6 @@ if arquivo_pdf is not None:
                 estudo_encontrado = palavra.split('/')[0].strip()
                 break
 
-    # Busca o TE correspondente
     te_resultado = "NÃO ENCONTRADO"
     if df_te is not None:
         for idx, row in df_te.iterrows():
@@ -130,13 +166,11 @@ if arquivo_pdf is not None:
                 te_resultado = str(row['TE']).strip()
                 break
 
-    # 3. DETECÇÃO INTELIGENTE DE EQUIPAMENTOS E TEMPERATURAS
     tem_temptale = "TEMPTALE" in texto_upper or "TT4" in texto_upper
     tem_tagalert_ref = "TAGALERT" in texto_upper and ("2-8" in texto_upper or "REFRIGER" in texto_upper or "36-46F" in texto_upper)
     tem_tagalert_amb = "TAGALERT" in texto_upper and ("20-25" in texto_upper or "15-25" in texto_upper)
     is_ambiente = tem_temptale or tem_tagalert_amb or "30C" in texto_upper
 
-    # 4. EXTRAÇÃO AUTOMÁTICA DA CIDADE / DESTINO
     cidade_destino = "NÃO IDENTIFICADA"
     linhas = texto_pdf.split('\n')
     for i, linha in enumerate(linhas):
@@ -165,7 +199,6 @@ if arquivo_pdf is not None:
 
     st.divider()
 
-    # --- CONSULTA E SEPARAÇÃO DE ATIVOS (COM BUSCA INTELIGENTE NA PRÓXIMA LINHA) ---
     st.subheader("📦 Separação de Ativos do Estoque")
     
     if df_estoque is not None and not df_estoque.empty:
@@ -182,7 +215,6 @@ if arquivo_pdf is not None:
                 return val if val != "nan" else "N/A"
             return "N/A"
 
-        # Pega o primeiro item válido correspondente
         if tem_temptale:
             filtro = df_estoque[df_estoque['Descricao_Clean'].str.contains("TEMPTALE", na=False)]
             if not filtro.empty:
@@ -261,7 +293,6 @@ if arquivo_pdf is not None:
 
     st.divider()
 
-    # --- DADOS PARA TROCA DE RESTRIÇÃO ---
     st.subheader("📋 Dados para Troca de Restrição (Cópia Individual)")
     
     val_depositante = "056998982001260"
@@ -272,13 +303,13 @@ if arquivo_pdf is not None:
     def criar_botao_individual(rotulo, valor_texto, id_unico):
         escaped = valor_texto.replace('`', '\\`').replace('$', '\\$')
         html_code = f"""
-        <div style="display: flex; align-items: center; margin-bottom: 10px; background-color: #f8f9fa; padding: 8px 12px; border-radius: 6px; border: 1px solid #e9ecef;">
-            <span style="font-weight: bold; width: 140px; color: #333;">{rotulo}:</span>
-            <span style="font-family: monospace; font-size: 15px; color: #0056b3; flex-grow: 1; margin-right: 15px;">{valor_texto}</span>
-            <button onclick="copiar_{id_unico}()" style="background-color: #28a745; color: white; padding: 6px 14px; border: none; border-radius: 4px; font-size: 13px; cursor: pointer; font-weight: bold;">
+        <div style="display: flex; align-items: center; margin-bottom: 10px; background-color: #ffffff; padding: 10px 14px; border-radius: 6px; border: 1px solid #d2dedb; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+            <span style="font-weight: bold; width: 140px; color: #1b3834;">{rotulo}:</span>
+            <span style="font-family: monospace; font-size: 15px; color: #209b7c; flex-grow: 1; margin-right: 15px; font-weight: bold;">{valor_texto}</span>
+            <button onclick="copiar_{id_unico}()" style="background-color: #209b7c; color: white; padding: 6px 14px; border: none; border-radius: 4px; font-size: 13px; cursor: pointer; font-weight: bold;">
                 📋 Copiar
             </button>
-            <span id="aviso_{id_unico}" style="margin-left: 10px; color: green; font-weight: bold; font-size: 12px; display: none;">Copiado!</span>
+            <span id="aviso_{id_unico}" style="margin-left: 10px; color: #209b7c; font-weight: bold; font-size: 12px; display: none;">Copiado!</span>
         </div>
         <script>
         function copiar_{id_unico}() {{
@@ -291,7 +322,7 @@ if arquivo_pdf is not None:
         }}
         </script>
         """
-        return components.html(html_code, height=55)
+        return components.html(html_code, height=60)
 
     criar_botao_individual("DEPOSITANTE", val_depositante, "dep")
     criar_botao_individual("PALETE", val_palete, "pal")
@@ -300,7 +331,6 @@ if arquivo_pdf is not None:
 
     st.divider()
 
-    # --- MONTAGEM AUTOMÁTICA DAS PARTICULARIDADES ---
     st.subheader("📝 Texto de Particularidades (Pronto para Uso)")
     
     paragrafos = []
@@ -331,10 +361,10 @@ if arquivo_pdf is not None:
     escaped_text = texto_final.replace('`', '\\`').replace('$', '\\$').replace('\n', '\\n')
     botao_copia_html = f"""
     <div style="text-align: left; margin-bottom: 20px;">
-        <button onclick="copiarTexto()" style="background-color: #0056b3; color: white; padding: 10px 20px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; font-weight: bold;">
+        <button onclick="copiarTexto()" style="background-color: #e59235; color: white; padding: 10px 20px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; font-weight: bold;">
             📋 Copiar Particularidades com 1 Clique
         </button>
-        <span id="aviso" style="margin-left: 10px; color: green; font-weight: bold; display: none;">Copiado com sucesso!</span>
+        <span id="aviso" style="margin-left: 10px; color: #209b7c; font-weight: bold; display: none;">Copiado com sucesso!</span>
     </div>
     <script>
     function copiarTexto() {{
@@ -349,7 +379,6 @@ if arquivo_pdf is not None:
     """
     components.html(botao_copia_html, height=60)
 
-    # --- MOTOR DE SLA COM CORREÇÃO DE FERIADO E FDS ---
     st.subheader("⏱️ Cronograma e Prazos (Regra das 48h + Feriados)")
     
     prazo_maximo_comercial = somar_dias_uteis(data_recebimento, 7)
