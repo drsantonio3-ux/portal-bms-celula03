@@ -7,6 +7,7 @@ import re
 import urllib.request
 import json
 import time
+import random
 
 # --- CONFIGURAÇÕES DA PÁGINA (SaaS Logístico - Wide) ---
 st.set_page_config(page_title="DRS Group | BMS Operations", layout="wide", page_icon="🏢")
@@ -55,6 +56,11 @@ st.markdown("""
         border-right: 1px solid #d2dedb;
         padding-top: 1rem;
     }
+    
+    /* Estilização da tabela Pandas no Streamlit */
+    .dataframe {
+        font-size: 12px !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -92,19 +98,21 @@ if "seriais_consumidos" not in st.session_state:
 if "ids_consumidos" not in st.session_state:
     st.session_state.ids_consumidos = set()
 
-# --- CARREGAR DADOS E ESTOQUE ---
-@st.cache_data(ttl=1)
-def carregar_dados_sheets():
+# --- CARREGAR DADOS E ESTOQUE COM VALIDAÇÃO HISTÓRICA ROBUSTA ---
+@st.cache_data(ttl=2)
+def carregar_dados_sheets(random_seed):
     id_estoque = "10f18RZ-48HiJS2HckG6Siw2WRE9zz92_Pj6chkTwXik"
     id_loggers = "1ztZC3s0kKINJLNOR-BEYUUFjycxSVT7NMGVNWdxWh98"
     
-    # TIMESTAMP GERADO PARA QUEBRAR O CACHE DO GOOGLE EM CASO DE F5
-    cb = int(time.time())
-    url_estoque = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv&cb={cb}"
-    url_tes = f"https://docs.google.com/spreadsheets/d/{id_loggers}/export?format=csv&gid=536812026&cb={cb}"
+    url_estoque = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv&cb={random_seed}"
+    url_usados = f"https://docs.google.com/spreadsheets/d/{id_estoque}/gviz/tq?tqx=out:csv&sheet=Loggers+J%C3%A1+Utilizados&cb={random_seed}"
+    url_tes = f"https://docs.google.com/spreadsheets/d/{id_loggers}/export?format=csv&gid=536812026&cb={random_seed}"
     
     try: df_est = pd.read_csv(url_estoque)
     except: df_est = None
+    
+    try: df_usados = pd.read_csv(url_usados, header=None)
+    except: df_usados = None
     
     if df_est is not None: 
         df_est['Descricao_Clean'] = df_est['Descricao'].astype(str).str.upper()
@@ -112,10 +120,25 @@ def carregar_dados_sheets():
         col_serie_est = next((c for c in df_est.columns if "SERIE" in c.upper() or "SÉRIE" in c.upper()), None)
         col_id_est = next((c for c in df_est.columns if "IDENTIFICACAO" in c.upper() or "ID" in c.upper()), None)
         
-        if col_serie_est and st.session_state.seriais_consumidos:
-            df_est = df_est[~df_est[col_serie_est].astype(str).str.strip().isin(st.session_state.seriais_consumidos)]
-        if col_id_est and st.session_state.ids_consumidos:
-            df_est = df_est[~df_est[col_id_est].astype(str).str.strip().isin(st.session_state.ids_consumidos)]
+        used_tokens = set()
+        for s in st.session_state.seriais_consumidos:
+            if s and str(s).upper() not in ["N/A", "NAN", "NONE", ""]:
+                used_tokens.add(str(s).strip())
+        for i in st.session_state.ids_consumidos:
+            if i and str(i).upper() not in ["N/A", "NAN", "NONE", ""]:
+                used_tokens.add(str(i).strip())
+        
+        if df_usados is not None and not df_usados.empty:
+            for col in df_usados.columns:
+                vals = df_usados[col].dropna().astype(str).str.strip().tolist()
+                for v in vals:
+                    if v and v.upper() not in ["N/A", "NAN", "NONE", "UNNAMED", "SERIE", "SÉRIE", "IDENTIFICACAO", "PALETE"]:
+                        used_tokens.add(v)
+        
+        if col_serie_est and used_tokens:
+            df_est = df_est[~df_est[col_serie_est].astype(str).str.strip().isin(used_tokens)]
+        if col_id_est and used_tokens:
+            df_est = df_est[~df_est[col_id_est].astype(str).str.strip().isin(used_tokens)]
 
     try:
         df_tes = pd.read_csv(url_tes)
@@ -126,7 +149,10 @@ def carregar_dados_sheets():
         
     return df_est, df_tes
 
-df_estoque, df_te = carregar_dados_sheets()
+if "cache_seed" not in st.session_state:
+    st.session_state.cache_seed = random.randint(1, 100000)
+
+df_estoque, df_te = carregar_dados_sheets(st.session_state.cache_seed)
 
 # --- LÓGICA DE NAVEGAÇÃO DE PÁGINAS ---
 if "pagina_atual" not in st.session_state:
@@ -233,9 +259,17 @@ if st.session_state.pagina_atual == "automacao":
             for idx, row in df_te.iterrows():
                 if estudo_encontrado in str(row['Estudo']).upper():
                     te_resultado = str(row['TE']).strip(); break
+                    
+        # --- DETECÇÃO DE CITOTÓXICOS ESPECÍFICOS ---
+        cyto_detectados = {
+            "bortezomib": "BORTEZOMIB" in texto_upper,
+            "sprycel": "SPRYCEL" in texto_upper or "DASATINIB" in texto_upper,
+            "paclitaxel": "PACLITAXEL" in texto_upper or "TAXOL" in texto_upper,
+            "cyclophosphamide": "CYCLOPHOSPHAMIDE" in texto_upper or "CICLOFOSFAMIDA" in texto_upper
+        }
 
-        # --- MOTOR DE REGRAS: SEPARAÇÃO DE CAIXAS, TEMPERATURA E CITOTÓXICOS ---
-        cytotoxic_list = ["BORTEZOMIB", "PACLITAXEL", "SPRYCEL", "CYCLOPHOSPHAMIDE"]
+        # --- MOTOR DE REGRAS: SEPARAÇÃO DE CAIXAS E TEMPERATURA ---
+        cytotoxic_list = ["BORTEZOMIB", "PACLITAXEL", "SPRYCEL", "CYCLOPHOSPHAMIDE", "DASATINIB", "TAXOL", "CICLOFOSFAMIDA"]
         blocos_storage = re.split(r'STORAGE\s*:', texto_upper)
         loggers_to_allocate = []
 
@@ -372,6 +406,7 @@ if st.session_state.pagina_atual == "automacao":
                             urllib.request.urlopen(req, timeout=25)
                             
                             st.cache_data.clear()
+                            st.session_state.cache_seed = random.randint(1, 100000)
                             st.success(f"✅ Baixa executada com sucesso! Itens removidos do estoque ativo.")
                             time.sleep(2)
                             st.rerun() 
@@ -394,30 +429,77 @@ if st.session_state.pagina_atual == "automacao":
         with c_esq: btn_copia("DEPOSITANTE", val_depositante, "d"); btn_copia("PALETE", val_palete, "p")
         with c_dir: btn_copia("ID ITEM", val_id, "i"); btn_copia("TE DO ESTUDO", val_te, "t")
 
-        # --- PARTICULARIDADES COM ACUMULO CORRETO DE TEMPTALE E TAG ALERT ---
+        # --- CONSTRUÇÃO DAS PARTICULARIDADES COM REGRAS DE CITOTÓXICOS ---
         paragrafos = ["Verificar se no processo consta Packing List e atentar se a quantidade, lote e validade está de acordo com as informações retiradas do sistema LOGIX."]
         
-        if tem_temptale: 
+        # Inserção das linhas padrão (temperatura e embalagem) baseada na separação do packing
+        if tem_temptale and not cyto_detectados["bortezomib"] and not cyto_detectados["cyclophosphamide"]: 
             paragrafos.extend([
                 "Houve envio de medicação AMBIENTE.", 
-                "As medicações foram acondicionadas em embalagem apropriada CREDO validada pelo cliente com TempTale ULTRA USB ambiente."
+                "As medicações foram acondicionadas em embalagem apropriada CREDO validada pelo cliente com TempTale ULTRA USB ambiente conforme solicitado pelo cliente."
             ])
             
-        if tem_tagalert_amb: 
+        if tem_tagalert_amb and not cyto_detectados["sprycel"] and not cyto_detectados["paclitaxel"] and not cyto_detectados["cyclophosphamide"]: 
             paragrafos.extend([
                 "Houve envio de medicação AMBIENTE.", 
-                "As medicações foram acondicionadas em embalagem CREDO com Tag Alert ambiente."
+                "As medicações foram acondicionadas em embalagem apropriada CREDO com Tag Alert ambiente conforme solicitado pelo cliente."
             ])
             
         if tem_tagalert_ref: 
             paragrafos.extend([
                 "Houve envio de medicação REFRIGERADA.", 
-                "As medicações foram acondicionadas em caixa CREDO SÉRIE 04 com Tag Alert refrigerado."
+                "As medicações foram acondicionadas em embalagem apropriada caixa CREDO SÉRIE 04 com Tag Alert refrigerado conforme solicitado pelo cliente."
             ])
             
-        paragrafos.append("Time DOC: Não aplicar o desconto padrão de 1 hora na SC de Envio caso o centro já tenha reduzido o período.")
-        texto_final = "\\n\\n".join(paragrafos)
+        paragrafos.append("Time DOC: Não aplicar o desconto padrão de 1 hora na SC de Envio caso o centro já tenha reduzido o período no agendamento.")
         
+        # --- REGRAS ESPECÍFICAS DE CITOTÓXICOS (APENSADAS NO FINAL) ---
+        if cyto_detectados["bortezomib"]:
+            paragrafos.append("") # Quebra de linha visual
+            paragrafos.extend([
+                "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 6.1” quando houver o envio de “BORTEZOMIB”",
+                "Para envios da medicação BORTEZOMIB, será anexado ficha de segurança do produto.",
+                "Para envios da medicação BORTEZOMIB, deverá ser encaminhado em caixa separada quando houver envio de mais medicações.",
+                "As medicações foram acondicionadas em embalagem apropriada CREDO validada pelo cliente com TempTale ULTRA USB ambiente conforme solicitado pelo cliente.",
+                "A etiqueta do Logger USB deve ir colada na Packing List de envio.",
+                "Produtos com temperaturas diferentes seguirão em caixas separadas quando houver a necessidade de TT4."
+            ])
+
+        if cyto_detectados["sprycel"]:
+            paragrafos.append("")
+            paragrafos.extend([
+                "As medicações foram acondicionadas em embalagem apropriada CREDO 28L validada pelo cliente com Tag Alert ambiente conforme solicitado pelo cliente.",
+                "No caso de medicações comerciais, as medicações estão devidamente etiquetadas com a etiqueta de venda proibida.",
+                "Para envios da medicação DASATINIB ou SPRYCEL, será anexado ficha de segurança do produto.",
+                "Para envios da medicação DASATINIB ou SPRYCEL, deverá ser encaminhado em caixa separada quando houver envio de mais medicações.",
+                "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 6.1” quando houver o envio de “DASATINIB OU SPRYCEL."
+            ])
+
+        if cyto_detectados["paclitaxel"]:
+            paragrafos.append("")
+            paragrafos.extend([
+                "As medicações foram acondicionadas em embalagem apropriada CREDO 28L validada pelo cliente com Tag Alert ambiente conforme solicitado pelo cliente.",
+                "O formulário de requisição dos produtos comerciais, deverá ser enviado para a Instituição de destino.",
+                "No caso de medicações comerciais, as medicações estão devidamente etiquetadas com a etiqueta de venda proibida.",
+                "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 3” quando houver o envio de “TAXOL OU PACLITAXEL”",
+                "Para envios da medicação PACLITAXEL ou TAXOL, será anexado ficha de segurança do produto.",
+                "Para envios da medicação PACLITAXEL ou TAXOL, deverá ser encaminhado em caixa separada quando houver envio de mais medicações."
+            ])
+
+        if cyto_detectados["cyclophosphamide"]:
+            paragrafos.append("")
+            paragrafos.extend([
+                "As medicações foram acondicionadas em embalagem apropriada CREDO 28L com Tag Alert ambiente conforme solicitado pelo cliente.",
+                "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 6.1” quando houver o envio de “CICLOFOSFAMIDA”",
+                "Para envios da medicação CICLOFOSFAMIDA, será anexado ficha de segurança do produto.",
+                "Para envios da medicação CICLOFOSFAMIDA, deverá ser encaminhado em caixa separada quando houver envio de mais medicações.",
+                "As medicações foram acondicionadas em embalagem apropriada CREDO 28L validada pelo cliente com TempTale ULTRA USB ambiente conforme solicitado pelo cliente.",
+                "A etiqueta do Logger USB deve ir colada na Packing List de envio.",
+                "Produtos com temperaturas diferentes seguirão em caixas separadas quando houver a necessidade de TT4."
+            ])
+
+        # Renderização do botão de cópia com as regras injetadas
+        texto_final = "\\n\\n".join([p for p in paragrafos if p != ""]).replace("  ", " ")
         components.html(f"""<button onclick="navigator.clipboard.writeText(`{texto_final}`); this.innerText='📋 Texto Copiado!';" style="background:#e59235; color:white; font-size:13px; font-weight:bold; padding:8px; border:none; border-radius:4px; width:100%; cursor:pointer;">📋 Copiar Particularidades</button>""", height=40)
 
         st.markdown("### ⏱️ SLA e Prazos Operacionais")
@@ -513,7 +595,7 @@ elif st.session_state.pagina_atual == "email":
         components.html(f"""<button onclick="navigator.clipboard.writeText('{corpo_js}'); this.innerText='Corpo Copiado!';" style="background:#e59235; color:white; border:none; border-radius:4px; padding:6px 20px; cursor:pointer; font-weight:bold; font-size:12px; width:100%;">Copiar Corpo do E-mail</button>""", height=40)
 
 # ==========================================
-# PÁGINA 3: CRUZAMENTO SOLICITAÇÃO x PACKING
+# PÁGINA 3: CRUZAMENTO SOLICITAÇÃO x PACKING (TABELA ESTRUTURADA)
 # ==========================================
 elif st.session_state.pagina_atual == "cruzamento":
     
@@ -521,8 +603,8 @@ elif st.session_state.pagina_atual == "cruzamento":
         <div style="background-color: #1b3834; padding: 18px 25px; border-radius: 6px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
             <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">⚖️ Validação de Remessa: Solicitação x PACKING</h2>
             <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
-                Faça o upload dos dois documentos para conferência item a item dos medicamentos, lotes, validades e seriais.<br>
-                <i>Nota: A temperatura não é bloqueada sistemicamente e deve ser conferida visualmente.</i>
+                Faça o upload dos dois documentos para conferência estruturada.<br>
+                O sistema gerará uma tabela comparativa evidenciando campos faltantes, conformidades e divergências.
             </p>
         </div>
     """, unsafe_allow_html=True)
@@ -544,8 +626,8 @@ elif st.session_state.pagina_atual == "cruzamento":
 
     if arquivo_sol and arquivo_packing:
         st.divider()
-        if st.button("Executar Cruzamento de Dados", use_container_width=True):
-            with st.spinner("Lendo PDFs e cruzando informações..."):
+        if st.button("Executar Cruzamento de Dados (Gerar Tabela)", use_container_width=True):
+            with st.spinner("Lendo PDFs e gerando tabela de validação..."):
                 try:
                     leitor_sol = PyPDF2.PdfReader(arquivo_sol)
                     texto_sol = " ".join([p.extract_text() for p in leitor_sol.pages]).upper()
@@ -561,10 +643,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                         match = re.search(r'([A-Z0-9]+-[0-9]+)', p)
                         return match.group(1) if match else p
 
-                    def normalizar_texto(texto):
-                        if not texto: return ""
-                        return re.sub(r'[\.\s\-\/]', '', str(texto)).upper()
-
                     def converter_data_ingles_para_pt(data_str):
                         meses = {
                             "JAN": "01", "FEB": "02", "MAR": "03", "APR": "04", "MAY": "05", "JUN": "06",
@@ -576,9 +654,10 @@ elif st.session_state.pagina_atual == "cruzamento":
                             dia = partes[0].zfill(2)
                             mes = meses.get(partes[1].upper(), "00")
                             ano = partes[2]
-                            return f"{dia}/{mes}/{ano}"
+                            return f"{ano}-{mes}-{dia}" # Ajustado para o padrão visualizado na solicitação
                         return data_str
 
+                    # 1. Extração - Solicitação (Documento Fonte)
                     s_ordem = re.search(r"ORDEM[^\d]*(\d{8,12})", texto_sol_limpo)
                     s_ordem = s_ordem.group(1) if s_ordem else "NÃO ENCONTRADO"
                     
@@ -588,9 +667,10 @@ elif st.session_state.pagina_atual == "cruzamento":
                     s_razao = re.search(r"\d{4}-\d{2}\s*-\s*([A-ZÇÃÕÁÉÍÓÚ\s]+?)(?=\s+\d{2}|\s+\()", texto_sol_limpo)
                     s_razao = limpar(s_razao.group(1)) if s_razao else "NÃO ENCONTRADO"
                     
-                    s_pi = re.search(r"INVESTIGADOR[^\w]*([A-Z\s]+?)(?=\s+HTTP|$)", texto_sol_limpo)
+                    s_pi = re.search(r"INVESTIGADOR[^\w]*([A-Z\s]+?)(?=\s+HTTP|$|PRODUTO)", texto_sol_limpo)
                     s_pi = limpar(s_pi.group(1)) if s_pi else "NÃO ENCONTRADO"
 
+                    # 2. Extração - Packing List (Documento Validado)
                     p_ordem = re.search(r"DELIVERY NUMBER\s*[:\s]*(\d+)", texto_packing_limpo)
                     p_ordem = p_ordem.group(1) if p_ordem else "NÃO ENCONTRADO"
                     
@@ -600,91 +680,112 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_shipto_match = re.search(r"SHIP TO\s*(.*?)(?=\d{5}-)", texto_packing_limpo)
                     p_shipto = limpar(p_shipto_match.group(1)) if p_shipto_match else "NÃO ENCONTRADO"
                     
-                    p_pi_match = re.search(r"DR\.?\s*([A-Z\s]+?)(?=\s*TEL)", texto_packing_limpo)
+                    p_pi_match = re.search(r"DR\.?\s*([A-Z\s]+?)(?=\s*TEL|BRAZIL)", texto_packing_limpo)
                     p_pi = limpar(p_pi_match.group(1)) if p_pi_match else "NÃO ENCONTRADO"
 
+                    # 3. Lógica da Tabela de Comparação
+                    resultados = []
+
+                    def validar_campo(nome_campo, val_fonte, val_validado, flexivel=False):
+                        if val_fonte == "NÃO ENCONTRADO" and val_validado == "NÃO ENCONTRADO":
+                            status, obs = "⚠️ Ausente", "Faltando em ambos."
+                        elif val_fonte == "NÃO ENCONTRADO":
+                            status, obs = "⚠️ Atenção", "Falta na Solicitação."
+                        elif val_validado == "NÃO ENCONTRADO":
+                            status, obs = "❌ Divergência", "Falta no Packing."
+                        elif val_fonte == val_validado:
+                            status, obs = "✅ Conforme", "Idênticos."
+                        else:
+                            if flexivel and ((val_fonte in val_validado) or (val_validado in val_fonte)):
+                                status, obs = "✅ Conforme", "Correspondência parcial válida."
+                            else:
+                                status, obs = "❌ Divergência", "Valores não batem."
+                        
+                        resultados.append({
+                            "Campo Validado": nome_campo,
+                            "Solicitação (Fonte)": str(val_fonte),
+                            "Packing List (Alvo)": str(val_validado),
+                            "Status": status,
+                            "Observação": obs
+                        })
+
+                    validar_campo("Delivery / Order Number", s_ordem, p_ordem)
+                    validar_campo("Protocolo do Estudo", s_prot, p_prot)
+                    
+                    # Tratamento flexível para médico e centro
+                    pi_sol_clean = limpar(re.sub(r'^DR\.?\s*', '', s_pi))
+                    pi_packing_clean = limpar(re.sub(r'^DR\.?\s*', '', p_pi))
+                    validar_campo("Investigador / Médico", pi_sol_clean, pi_packing_clean, flexivel=True)
+                    validar_campo("Centro / Razão Social", s_razao, p_shipto, flexivel=True)
+
+                    # 4. Extração e Validação dos Medicamentos (Batches/Serials)
                     padrao_packing = re.findall(
                         r"(\d{6,8})\s+([A-Z0-9\.\-]+)\s+1\s+EA\s+(\d{2}-[A-Z]{3}-\d{4})\s+([A-Z0-9\s\(\)]+?)\s+SERIAL NO\.\s*\((\d{6,8})\)",
                         texto_packing_limpo
                     )
 
-                    medicamentos_conferencia = []
                     if padrao_packing:
-                        for mat, lote_pk, val_pk, desc_pk, serial_pk in padrao_packing:
-                            medicamentos_conferencia.append({
-                                "nome": limpar(desc_pk),
-                                "lote": lote_pk,
-                                "val": converter_data_ingles_para_pt(val_pk),
-                                "serial": serial_pk
-                            })
-                    
-                    if not medicamentos_conferencia:
-                        medicamentos_conferencia = [
-                            {"nome": "POMALIDOMIDE CAP 4MG (1BLCRDX21) CA088OLMUL", "lote": "Z3035A.5A", "val": "30/09/2028", "serial": "1019376"},
-                            {"nome": "DEXAMETH TAB 4MG (1BLCRDX20) CA088 OLMUL", "lote": "B64692A.4B", "val": "31/07/2029", "serial": "1008025"},
-                            {"nome": "DARATUMUMAB SINJ 1800MG(IVL) CA088 OLMUL", "lote": "PJS2E00.5A", "val": "30/09/2027", "serial": "1015146"}
-                        ]
-
-                    erros = []
-                    alertas = []
-
-                    if s_ordem != p_ordem: erros.append(f"**Ordem:** Solicitação [{s_ordem}] ❌ PACKING [{p_ordem}]")
-                    else: alertas.append(f"✅ **Ordem:** {s_ordem}")
-
-                    if s_prot != p_prot: erros.append(f"**Protocolo:** Solicitação [{s_prot}] ❌ PACKING [{p_prot}]")
-                    else: alertas.append(f"✅ **Protocolo:** {s_prot}")
-
-                    pi_sol_clean = limpar(re.sub(r'^DR\.?\s*', '', s_pi))
-                    pi_packing_clean = limpar(re.sub(r'^DR\.?\s*', '', p_pi))
-                    razao_bate = (s_razao in p_shipto) or (p_shipto in s_razao)
-                    medico_nome = "JAYR SCHMIDT FILHO" if "JAYR" in texto_sol_limpo else pi_packing_clean
-                    pi_bate = (medico_nome in texto_sol_limpo) or (pi_sol_clean in pi_packing_clean) or (pi_packing_clean in pi_sol_clean)
-
-                    if not razao_bate:
-                        if pi_bate:
-                            alertas.append(f"⚠️ **Razão Social Diferente** (Solicitação: [{s_razao}] / PACKING: [{p_shipto}]), mas **Investigador/Médico validado com sucesso:** [{medico_nome}]")
-                        else:
-                            erros.append(f"**FALHA CRÍTICA PI/Centro:** Razão Social divergente e Investigador/Médico não confere nos documentos.")
-                    else:
-                        alertas.append(f"✅ **Destinatário/Razão Social:** {s_razao}")
-
-                    texto_sol_norm = normalizar_texto(texto_sol_limpo)
-
-                    for med in medicamentos_conferencia:
-                        s_serial = med["serial"]
-                        s_nome = med["nome"]
-                        s_lote = med["lote"]
-                        s_val = med["val"]
-
-                        if s_serial not in texto_sol_limpo:
-                            erros.append(f"❌ **Produto Faltante:** O medicamento **{s_nome}** (Serial: `{s_serial}`) não consta na Solicitação.")
-                        else:
-                            lote_norm = normalizar_texto(s_lote)
-                            lote_ok = lote_norm in texto_sol_norm
-                            val_ok = s_val in texto_sol_limpo
-
-                            if not lote_ok:
-                                erros.append(f"❌ **Divergência de Lote:** O medicamento **{s_nome}** (Serial: `{s_serial}`) está com o lote incorreto.")
-                            elif not val_ok:
-                                erros.append(f"❌ **Divergência de Validade:** O medicamento **{s_nome}** (Serial: `{s_serial}`) está com a validade incorreta.")
+                        for idx, (mat, lote_pk, val_pk, desc_pk, serial_pk) in enumerate(padrao_packing):
+                            nome_med = limpar(desc_pk)
+                            val_convertida = converter_data_ingles_para_pt(val_pk)
+                            
+                            # Verifica se o Serial existe no texto da Solicitação
+                            if serial_pk in texto_sol_limpo:
+                                # Verifica o lote (removendo pontuações para evitar erro de formatação)
+                                lote_sol = "Lote OK" if re.sub(r'[\.\s\-\/]', '', lote_pk) in re.sub(r'[\.\s\-\/]', '', texto_sol_limpo) else "Lote Divergente"
+                                val_sol = "Validade OK" if val_convertida in texto_sol_limpo or val_pk in texto_sol_limpo else "Validade Divergente"
+                                
+                                status_med = "✅ Conforme" if lote_sol == "Lote OK" and val_sol == "Validade OK" else "❌ Divergência"
+                                
+                                resultados.append({
+                                    "Campo Validado": f"Medicamento {idx+1}: {nome_med[:20]}...",
+                                    "Solicitação (Fonte)": f"Serial: {serial_pk} | {lote_sol} | {val_sol}",
+                                    "Packing List (Alvo)": f"Serial: {serial_pk} | Lote: {lote_pk} | Val: {val_pk}",
+                                    "Status": status_med,
+                                    "Observação": "Medicação encontrada." if status_med == "✅ Conforme" else "Checar Lote/Validade na Solicitação."
+                                })
                             else:
-                                alertas.append(f"✅ **Medicamento Validado:** {s_nome} | Lote: `{s_lote}` | Validade: `{s_val}` | Serial: `{s_serial}`")
-
-                    st.markdown("### Resultado do Cruzamento")
-                    
-                    if erros:
-                        st.error("🚨 **OPERAÇÃO BLOQUEADA: Divergências Encontradas na Conferência**")
-                        for e in erros:
-                            st.markdown(f"- {e}")
+                                resultados.append({
+                                    "Campo Validado": f"Medicamento {idx+1}: {nome_med[:20]}...",
+                                    "Solicitação (Fonte)": "NÃO ENCONTRADO",
+                                    "Packing List (Alvo)": f"Serial: {serial_pk} | Lote: {lote_pk} | Val: {val_pk}",
+                                    "Status": "❌ Divergência",
+                                    "Observação": "Serial ausente na Solicitação."
+                                })
                     else:
-                        st.success("✅ **OPERAÇÃO APROVADA: Todos os dados críticos e medicamentos conferem integralmente.**")
+                        resultados.append({
+                            "Campo Validado": "Medicamentos / Seriais",
+                            "Solicitação (Fonte)": "-",
+                            "Packing List (Alvo)": "Nenhum serial extraído",
+                            "Status": "⚠️ Atenção",
+                            "Observação": "Formato de medicamentos do Packing não reconhecido."
+                        })
+
+                    # Renderiza o Pandas DataFrame no Streamlit
+                    df_resultado = pd.DataFrame(resultados)
                     
-                    st.markdown("---")
-                    st.markdown("#### Detalhes da Conferência:")
-                    for a in alertas:
-                        st.markdown(f"- {a}")
+                    # Define a cor baseada no status geral
+                    if "❌ Divergência" in df_resultado["Status"].values:
+                        st.error("🚨 **OPERAÇÃO BLOQUEADA: Divergências Encontradas na Conferência**")
+                    else:
+                        st.success("✅ **OPERAÇÃO APROVADA: Todos os dados críticos conferem integralmente.**")
+                        
+                    st.markdown("### 📊 Tabela de Validação")
                     
-                    st.info("⚠️ **Aviso Operacional:** O sistema não bloqueia divergências de temperatura por regra de negócio. Confirme visualmente nos documentos físicos se as tags de temperatura solicitadas conferem.")
+                    # Estilização condicional do dataframe
+                    def color_status(val):
+                        if val == "✅ Conforme": return 'color: #155724; background-color: #d4edda; font-weight: bold'
+                        elif val == "❌ Divergência": return 'color: #721c24; background-color: #f8d7da; font-weight: bold'
+                        elif val == "⚠️ Atenção" or val == "⚠️ Ausente": return 'color: #856404; background-color: #fff3cd; font-weight: bold'
+                        return ''
+
+                    st.dataframe(
+                        df_resultado.style.map(color_status, subset=['Status']),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                    
+                    st.info("⚠️ **Aviso Operacional:** O sistema confere automaticamente dados numéricos (Delivery, Protocolo, Seriais). Dados de texto (Razão Social/Médico) utilizam busca flexível parcial. Confirme visualmente a temperatura exigida.")
 
                 except Exception as e:
                     st.error(f"Erro inesperado ao processar os arquivos: {e}")
