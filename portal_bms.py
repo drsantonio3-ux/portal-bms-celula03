@@ -576,11 +576,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                     elif "MARIZA SCHAAN" in texto_sol_upper:
                         s_pi = "MARIZA SCHAAN"
 
-                    # Extração rigorosa de lote na Solicitação
-                    s_lote_match = re.search(r"\b(ADC\d{3,6}|MA\d{3,6}[A-Z\.]*)\b", texto_sol_upper)
-                    s_lote = s_lote_match.group(1) if s_lote_match else "NÃO CONSTA"
-
-                    # Quantidade baseada na contagem de seriais reais listados na solicitação
                     seriais_sol = re.findall(r"\b(113\d{4}|571\d{2})\b", texto_sol_upper)
                     s_qty = str(len(seriais_sol)) if len(seriais_sol) > 0 else (re.search(r"QUANTIDADE\s*[:\s]*(\d+)", texto_sol_upper).group(1) if re.search(r"QUANTIDADE\s*[:\s]*(\d+)", texto_sol_upper) else "NÃO CONSTA")
 
@@ -616,8 +611,18 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_qty_match = re.search(r"(\d+)\s*EA", texto_packing_upper)
                     p_qty = p_qty_match.group(1) if p_qty_match else "NÃO CONSTA"
 
+                    # Extração rigorosa do lote na Packing List
                     p_lote_match = re.search(r"\b(ADC\d{3,6}|MA\d{3,6}[A-Z\.]*)\b", texto_packing_upper)
                     p_lote = p_lote_match.group(1) if p_lote_match else "NÃO CONSTA"
+
+                    # Validação cruzada e inteligente do lote no documento fonte (NEWSE/Solicitação)
+                    p_lote_limpo = p_lote.replace(".", "").replace(" ", "")
+                    texto_sol_sem_espaco = texto_sol_upper.replace(".", "").replace(" ", "")
+                    if p_lote != "NÃO CONSTA" and p_lote_limpo in texto_sol_sem_espaco:
+                        s_lote = p_lote
+                    else:
+                        s_lote_match = re.search(r"\b(ADC\d{3,6}|MA\d{3,6}[A-Z\.]*)\b", texto_sol_upper)
+                        s_lote = s_lote_match.group(1) if s_lote_match else "NÃO CONSTA"
 
                     serial_match = re.search(r"SERIAL\s*NO\.?\s*\(([^)]+)\)", texto_packing_upper)
                     seriais_packing = []
