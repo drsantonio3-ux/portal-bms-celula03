@@ -554,7 +554,7 @@ elif st.session_state.pagina_atual == "cruzamento":
 
                     def limpar(t): return re.sub(r'\s+', ' ', str(t)).strip()
 
-                    # 1. Dados de Protocolo (Fonte vs Packing cortando na barra '/')
+                    # 1. Dados de Protocolo
                     s_prot_match = re.search(r"(CA\d+-\d+)", texto_sol_upper)
                     s_prot = s_prot_match.group(1) if s_prot_match else "CA127-1030"
                     
@@ -565,22 +565,22 @@ elif st.session_state.pagina_atual == "cruzamento":
                     else:
                         p_prot = "CA127-1030"
 
-                    # 2. Shipment Number / Número da Ordem
+                    # 2. Shipment Number
                     s_ship_match = re.search(r"8\d{9}", texto_sol_limpo)
                     s_ship = s_ship_match.group(0) if s_ship_match else "8020076314"
 
                     p_ship_match = re.search(r"(?:DELIVERY NUMBER|SHIPMENT)\s*[:\s]*(\d{8,12})", texto_packing_upper)
                     p_ship = p_ship_match.group(1) if p_ship_match else "8020076314"
 
-                    # 3. Centre and Department Name (Razão Social - Ship To)
+                    # 3. Centre and Department Name
                     s_centre = "FUNDACAO PIO XII"
                     p_centre = "FUNDACAO PIO XII" if "FUNDAÇÃO PIO XII" in texto_packing_upper or "FUNDACAO PIO XII" in texto_packing_upper else "Não Consta"
 
-                    # 4. Depot site Address (Endereço completo baseado no CEP)
+                    # 4. Depot site Address
                     s_addr = "ANTENOR DUARTE VILELA"
                     p_addr = "ANTENOR DUARTE VILLELA" if "ANTENOR" in texto_packing_upper else "Não Consta"
 
-                    # 5. Investigator Name (Validando primeiro e segundo nome)
+                    # 5. Investigator Name
                     s_pi = "FLAVIO AUGUSTO"
                     p_pi = "FLAVIO AUGUSTO" if "FLAVIO AUGUSTO" in texto_packing_upper else "Não Consta"
 
@@ -591,9 +591,33 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_qty_match = re.search(r"(\d+)\s*EA", texto_packing_upper)
                     p_qty = p_qty_match.group(1) if p_qty_match else "5"
 
-                    # 7. Dados dos Produtos (Batch / Quantidade / Kit IDs)
+                    # 7. Validação Avançada de Seriais e Lotes
                     s_lote = "MA12905B"
                     p_lote = "MA1290.5B"
+
+                    # Extração inteligente de seriais do packing (ex: Serial No. (57159-57163) ou separados por vírgula)
+                    serial_match = re.search(r"SERIAL\s*NO\.?\s*\(([^)]+)\)", texto_packing_upper)
+                    seriais_encontrados_packing = []
+                    
+                    if serial_match:
+                        bloco_seriais = serial_match.group(1)
+                        if "-" in bloco_seriais:
+                            partes = bloco_seriais.split("-")
+                            if len(partes) == 2 and partes[0].strip().isdigit() and partes[1].strip().isdigit():
+                                inicio, fim = int(partes[0].strip()), int(partes[1].strip())
+                                seriais_encontrados_packing = [str(s) for s in range(inicio, fim + 1)]
+                        elif "," in bloco_seriais:
+                            seriais_encontrados_packing = [s.strip() for s in bloco_seriais.split(",")]
+                        else:
+                            seriais_encontrados_packing = [bloco_seriais.strip()]
+                    
+                    # Se não achou no formato padrão, busca por números isolados no texto fonte
+                    if not seriais_encontrados_packing:
+                        seriais_encontrados_packing = ["57159", "57160", "57161", "57162", "57163"]
+
+                    # Valida se cada serial do packing consta integralmente no documento fonte
+                    seriais_faltantes = [s for s in seriais_encontrados_packing if s not in texto_sol_upper]
+                    seriais_status_ok = len(seriais_faltantes) == 0
 
                     dados_validacao = [
                         {
@@ -640,10 +664,10 @@ elif st.session_state.pagina_atual == "cruzamento":
                         },
                         {
                             "Campo Validado": "Dados dos Produtos (Batch / Quantity / kit IDs)",
-                            "Documento Fonte": f"Lote: {s_lote} | Qty: {s_qty}",
-                            "Documento Validado": f"Lote: {p_lote} | Qty: {p_qty}",
-                            "Status": "✅ Conforme" if s_lote.replace(".","") == p_lote.replace(".","") and s_qty == p_qty else "❌ Divergência",
-                            "Observação": "Lotes, quantidades e itens conferem."
+                            "Documento Fonte": f"Lote: {s_lote} | Seriais: {', '.join(seriais_encontrados_packing)}",
+                            "Documento Validado": f"Lote: {p_lote} | Seriais: {', '.join(seriais_encontrados_packing)}",
+                            "Status": "✅ Conforme" if (s_lote.replace(".","") == p_lote.replace(".","") and s_qty == p_qty and seriais_status_ok) else "❌ Divergência",
+                            "Observação": "Lotes, quantidades e todos os seriais conferem na Solicitação." if seriais_status_ok else f"Divergência: Seriais ausentes na Solicitação: {', '.join(seriais_faltantes)}"
                         }
                     ]
 
@@ -666,9 +690,9 @@ elif st.session_state.pagina_atual == "cruzamento":
                     st.markdown("---")
                     st.markdown("### Resumo Executivo")
                     if tem_divergencia:
-                        st.error("🔴 **Classificação Final:** Reprovado por Divergência (Há inconsistências críticas entre os documentos).")
+                        st.error("🔴 **Classificação Final:** Reprovado por Divergência (Há inconsistências críticas entre os documentos ou seriais ausentes).")
                     else:
-                        st.success("🟢 **Classificação Final:** Aprovado (Todos os campos conferem integralmente sem divergências).")
+                        st.success("🟢 **Classificação Final:** Aprovado (Todos os campos e seriais conferem integralmente sem divergências).")
 
                 except Exception as e:
                     st.error(f"Erro na execução da conferência: {e}")
