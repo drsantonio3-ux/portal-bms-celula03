@@ -554,10 +554,36 @@ elif st.session_state.pagina_atual == "cruzamento":
 
                     def limpar(t): return re.sub(r'\s+', ' ', str(t)).strip()
 
-                    # 1. Dados de Protocolo (Cortando na barra '/')
+                    # --- EXTRAÇÃO DOCUMENTO FONTE (SOLICITAÇÃO / NEWSE) ---
                     s_prot_match = re.search(r"(CA\d+-\d+)", texto_sol_upper)
                     s_prot = s_prot_match.group(1) if s_prot_match else "NÃO CONSTA"
-                    
+
+                    s_ship_match = re.search(r"(?:ORDEM|ORDER|SHIPMENT)[^\d]*(\d{8,12})", texto_sol_upper)
+                    s_ship = s_ship_match.group(1) if s_ship_match else (re.search(r"\b(8\d{9})\b", texto_sol_limpo).group(1) if re.search(r"\b(8\d{9})\b", texto_sol_limpo) else "NÃO CONSTA")
+
+                    s_centre = "NÃO CONSTA"
+                    if "FUNDACAO PIO XII" in texto_sol_upper or "FUNDAÇÃO PIO XII" in texto_sol_upper:
+                        s_centre = "FUNDACAO PIO XII"
+                    elif "HOSPITAL SÃO LUCAS" in texto_sol_upper or "HOSPITAL SAO LUCAS" in texto_sol_upper:
+                        s_centre = "HOSPITAL SAO LUCAS DA PUCRS"
+
+                    s_cep_match = re.search(r"CEP[^\d]*(\d{8})", texto_sol_upper)
+                    s_addr = s_cep_match.group(1) if s_cep_match else (re.search(r"\b(\d{8})\b", texto_sol_upper).group(1) if re.search(r"\b(\d{8})\b", texto_sol_upper) else "NÃO CONSTA")
+
+                    s_pi = "NÃO CONSTA"
+                    if "FLAVIO AUGUSTO" in texto_sol_upper:
+                        s_pi = "FLAVIO AUGUSTO"
+                    elif "MARIZA SCHAAN" in texto_sol_upper:
+                        s_pi = "MARIZA SCHAAN"
+
+                    s_lotes_sol = re.findall(r"\b(MA\d{4,6}[A-Z]*|ADC\d{4})\b", texto_sol_upper)
+                    s_qty = str(len(s_lotes_sol)) if len(s_lotes_sol) > 0 else "NÃO CONSTA"
+
+                    s_lote_match = re.search(r"\b(ADC\d{3,6}|MA\d{3,6}[A-Z\.]*)\b", texto_sol_upper)
+                    s_lote = s_lote_match.group(1) if s_lote_match else "NÃO CONSTA"
+
+
+                    # --- EXTRAÇÃO DOCUMENTO VALIDADO (PACKING LIST) ---
                     p_prot_match = re.search(r"PROTOCOL NUMBER\s*[:\s]*([A-Z0-9\-\/]+)", texto_packing_upper)
                     if p_prot_match:
                         p_prot_raw = p_prot_match.group(1).split('/')[0].strip()
@@ -566,113 +592,100 @@ elif st.session_state.pagina_atual == "cruzamento":
                     else:
                         p_prot = "NÃO CONSTA"
 
-                    # 2. Shipment / Ordem Number
-                    s_ship_match = re.search(r"(?:ORDEM|ORDER|SHIPMENT)[^\d]*(\d{8,12})", texto_sol_upper)
-                    s_ship = s_ship_match.group(1) if s_ship_match else (re.search(r"\b(8\d{9})\b", texto_sol_limpo).group(1) if re.search(r"\b(8\d{9})\b", texto_sol_limpo) else "NÃO CONSTA")
-
                     p_ship_match = re.search(r"(?:DELIVERY NUMBER|SHIPMENT)\s*[:\s]*(\d{8,12})", texto_packing_upper)
                     p_ship = p_ship_match.group(1) if p_ship_match else "NÃO CONSTA"
 
-                    # 3. Centre and Department Name
-                    s_centre = "HOSPITAL SÃO LUCAS DA PUCRS" if "HOSPITAL" in texto_sol_upper else "NÃO CONSTA"
-                    p_centre = "HOSPITAL SAO LUCAS DA PUCRS" if "HOSPITAL" in texto_packing_upper else "NÃO CONSTA"
-
-                    # 4. Depot site Address (CEP normalizado sem hífen)
-                    s_cep_match = re.search(r"CEP[^\d]*(\d{8})", texto_sol_upper)
-                    s_addr = s_cep_match.group(1) if s_cep_match else (re.search(r"\b(\d{8})\b", texto_sol_upper).group(1) if re.search(r"\b(\d{8})\b", texto_sol_upper) else "90610000")
-
+                    p_centre = "NÃO CONSTA"
                     p_shipto_bloco = texto_packing_upper.split("SHIP TO")[-1] if "SHIP TO" in texto_packing_upper else texto_packing_upper
+                    if "FUNDAÇÃO PIO XII" in p_shipto_bloco or "FUNDACAO PIO XII" in p_shipto_bloco:
+                        p_centre = "FUNDACAO PIO XII"
+                    elif "HOSPITAL SAO LUCAS" in p_shipto_bloco or "HOSPITAL SÃO LUCAS" in p_shipto_bloco:
+                        p_centre = "HOSPITAL SAO LUCAS DA PUCRS"
+
                     p_cep_match = re.search(r"(\d{5}-?\d{3})", p_shipto_bloco)
-                    p_addr = p_cep_match.group(1).replace("-", "") if p_cep_match else "90610000"
+                    p_addr = p_cep_match.group(1).replace("-", "") if p_cep_match else "NÃO CONSTA"
 
-                    # 5. Investigator Name
-                    s_pi = "MARIZA SCHAAN" if "MARIZA SCHAAN" in texto_sol_upper else "NÃO CONSTA"
-                    p_pi = "MARIZA SCHAAN" if "MARIZA SCHAAN" in texto_packing_upper else "NÃO CONSTA"
+                    p_pi = "NÃO CONSTA"
+                    if "FLAVIO AUGUSTO" in p_shipto_bloco or "FLAVIO AUGUSTO" in texto_packing_upper:
+                        p_pi = "FLAVIO AUGUSTO"
+                    elif "MARIZA SCHAAN" in p_shipto_bloco or "MARIZA SCHAAN" in texto_packing_upper:
+                        p_pi = "MARIZA SCHAAN"
 
-                    # 6. Total quantity in shipment (Sem sufixo EA)
                     p_qty_match = re.search(r"(\d+)\s*EA", texto_packing_upper)
-                    p_qty = p_qty_match.group(1) if p_qty_match else "4"
+                    p_qty = p_qty_match.group(1) if p_qty_match else "NÃO CONSTA"
 
-                    s_qty_matches = re.findall(r"113\d+", texto_sol_upper)
-                    s_qty = str(len(s_qty_matches)) if len(s_qty_matches) > 0 else p_qty
-
-                    # 7. Dados dos Produtos (Lote real via padrão rigoroso ADCxxxx ou MAxxxx)
                     p_lote_match = re.search(r"\b(ADC\d{3,6}|MA\d{3,6}[A-Z\.]*)\b", texto_packing_upper)
-                    p_lote = p_lote_match.group(1) if p_lote_match else "ADC4491"
+                    p_lote = p_lote_match.group(1) if p_lote_match else "NÃO CONSTA"
 
-                    s_lote_match = re.search(r"\b(ADC\d{3,6}|MA\d{3,6}[A-Z\.]*)\b", texto_sol_upper)
-                    s_lote = s_lote_match.group(1) if s_lote_match else p_lote
-
-                    # Extração de Seriais do Packing
                     serial_match = re.search(r"SERIAL\s*NO\.?\s*\(([^)]+)\)", texto_packing_upper)
-                    seriais_encontrados_packing = []
-                    
+                    seriais_packing = []
                     if serial_match:
-                        bloco_seriais = serial_match.group(1)
-                        if "-" in bloco_seriais:
-                            partes = bloco_seriais.split("-")
-                            if len(partes) == 2 and partes[0].strip().isdigit() and partes[1].strip().isdigit():
-                                inicio, fim = int(partes[0].strip()), int(partes[1].strip())
-                                seriais_encontrados_packing = [str(s) for s in range(inicio, fim + 1)]
-                        elif "," in bloco_seriais:
-                            seriais_encontrados_packing = [s.strip() for s in bloco_seriais.split(",")]
+                        bloco = serial_match.group(1)
+                        if "-" in bloco:
+                            p_arr = bloco.split("-")
+                            if len(p_arr) == 2 and p_arr[0].strip().isdigit() and p_arr[1].strip().isdigit():
+                                seriais_packing = [str(s) for s in range(int(p_arr[0]), int(p_arr[1]) + 1)]
+                        elif "," in bloco:
+                            seriais_packing = [s.strip() for s in bloco.split(",")]
                         else:
-                            seriais_encontrados_packing = [bloco_seriais.strip()]
+                            seriais_packing = [bloco.strip()]
                     else:
-                        seriais_encontrados_packing = ["1131827", "1131828", "1132159", "1132160"]
+                        seriais_packing = re.findall(r"\b\d{5,8}\b", texto_packing_upper)
 
-                    seriais_faltantes = [s for s in seriais_encontrados_packing if s not in texto_sol_upper]
-                    seriais_status_ok = len(seriais_faltantes) == 0 and len(seriais_encontrados_packing) > 0
+                    seriais_faltantes = [s for s in seriais_packing if s not in texto_sol_upper]
+                    seriais_status_ok = len(seriais_faltantes) == 0 and len(seriais_packing) > 0
 
+
+                    # --- COMPARAÇÃO ESTRITA ---
                     dados_validacao = [
                         {
                             "Campo Validado": "Dados de Protocolo",
                             "Documento Fonte": s_prot,
                             "Documento Validado": p_prot,
-                            "Status": "✅ Conforme" if s_prot.replace("-","") in p_prot.replace("-","") or p_prot.replace("-","") in s_prot.replace("-","") else "❌ Divergência",
-                            "Observação": "Protocolos idênticos ou correspondentes." if s_prot.replace("-","") in p_prot.replace("-","") else "Divergência no protocolo."
+                            "Status": "✅ Conforme" if s_prot != "NÃO CONSTA" and p_prot != "NÃO CONSTA" and (s_prot.replace("-","") in p_prot.replace("-","") or p_prot.replace("-","") in s_prot.replace("-","")) else "❌ Divergência",
+                            "Observação": "Protocolos idênticos." if s_prot == p_prot else "Protocolos divergentes entre os documentos."
                         },
                         {
                             "Campo Validado": "Shipment Number",
                             "Documento Fonte": s_ship,
                             "Documento Validado": p_ship,
-                            "Status": "✅ Conforme" if s_ship == p_ship else "❌ Divergência",
+                            "Status": "✅ Conforme" if s_ship != "NÃO CONSTA" and s_ship == p_ship else "❌ Divergência",
                             "Observação": "Números de shipment idênticos." if s_ship == p_ship else "Divergência no shipment."
                         },
                         {
                             "Campo Validado": "Centre and Department Name",
                             "Documento Fonte": s_centre,
                             "Documento Validado": p_centre,
-                            "Status": "✅ Conforme" if "HOSPITAL" in s_centre or "HOSPITAL" in p_centre else "❌ Divergência",
-                            "Observação": "Razão social validada com sucesso."
+                            "Status": "✅ Conforme" if s_centre != "NÃO CONSTA" and s_centre == p_centre else "❌ Divergência",
+                            "Observação": "Razão social avaliada." if s_centre == p_centre else "Divergência na razão social / centro."
                         },
                         {
                             "Campo Validado": "Depot site Address",
                             "Documento Fonte": s_addr,
                             "Documento Validado": p_addr,
-                            "Status": "✅ Conforme" if s_addr == p_addr else "❌ Divergência",
-                            "Observação": "CEP validado corretamente (sem hífen)."
+                            "Status": "✅ Conforme" if s_addr != "NÃO CONSTA" and s_addr == p_addr else "❌ Divergência",
+                            "Observação": "Endereço / CEP verificado." if s_addr == p_addr else "Divergência no endereço / CEP."
                         },
                         {
                             "Campo Validado": "Investigator Name",
                             "Documento Fonte": s_pi,
                             "Documento Validado": p_pi,
-                            "Status": "✅ Conforme" if s_pi == p_pi else "❌ Divergência",
-                            "Observação": "Nome do médico validado."
+                            "Status": "✅ Conforme" if s_pi != "NÃO CONSTA" and s_pi == p_pi else "❌ Divergência",
+                            "Observação": "Nome do investigador comparado." if s_pi == p_pi else "Divergência no nome do investigador."
                         },
                         {
                             "Campo Validado": "Total quantity in shipment",
                             "Documento Fonte": s_qty,
                             "Documento Validado": p_qty,
-                            "Status": "✅ Conforme" if s_qty == p_qty else "❌ Divergência",
-                            "Observação": "Quantidade validada (sem sufixo EA)."
+                            "Status": "✅ Conforme" if s_qty != "NÃO CONSTA" and s_qty == p_qty else "❌ Divergência",
+                            "Observação": "Quantidade total avaliada." if s_qty == p_qty else "Divergência na quantidade total."
                         },
                         {
                             "Campo Validado": "Dados dos Produtos (Batch / Quantity / kit IDs)",
-                            "Documento Fonte": f"Lote: {s_lote} | Seriais: {', '.join(seriais_encontrados_packing)}",
-                            "Documento Validado": f"Lote: {p_lote} | Seriais: {', '.join(seriais_encontrados_packing)}",
-                            "Status": "✅ Conforme" if (s_lote.replace(".","") == p_lote.replace(".","") and s_qty == p_qty and seriais_status_ok) else "❌ Divergência",
-                            "Observação": "Lotes, quantidades e todos os seriais conferem na Solicitação." if seriais_status_ok else f"Divergência nos seriais: {', '.join(seriais_faltantes)}"
+                            "Documento Fonte": f"Lote: {s_lote} | Seriais: {', '.join(seriais_packing)}",
+                            "Documento Validado": f"Lote: {p_lote} | Seriais: {', '.join(seriais_packing)}",
+                            "Status": "✅ Conforme" if s_lote != "NÃO CONSTA" and s_lote.replace(".","") == p_lote.replace(".","") and s_qty == p_qty and seriais_status_ok else "❌ Divergência",
+                            "Observação": "Lotes e seriais conferem." if seriais_status_ok and s_lote == p_lote else "Divergência crítica de lote ou itens entre os documentos."
                         }
                     ]
 
