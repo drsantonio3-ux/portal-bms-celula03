@@ -92,16 +92,21 @@ if "seriais_consumidos" not in st.session_state:
 if "ids_consumidos" not in st.session_state:
     st.session_state.ids_consumidos = set()
 
-# --- CARREGAR DADOS E ESTOQUE ---
+# --- CARREGAR DADOS E ESTOQUE COM VALIDAÇÃO HISTÓRICA ---
 @st.cache_data(ttl=5)
 def carregar_dados_sheets():
     id_estoque = "10f18RZ-48HiJS2HckG6Siw2WRE9zz92_Pj6chkTwXik"
     id_loggers = "1ztZC3s0kKINJLNOR-BEYUUFjycxSVT7NMGVNWdxWh98"
+    
     url_estoque = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv"
+    url_usados = f"https://docs.google.com/spreadsheets/d/{id_estoque}/gviz/tq?tqx=out:csv&sheet=Loggers+J%C3%A1+Utilizados"
     url_tes = f"https://docs.google.com/spreadsheets/d/{id_loggers}/export?format=csv&gid=536812026"
     
     try: df_est = pd.read_csv(url_estoque)
     except: df_est = None
+    
+    try: df_usados = pd.read_csv(url_usados)
+    except: df_usados = None
     
     if df_est is not None: 
         df_est['Descricao_Clean'] = df_est['Descricao'].astype(str).str.upper()
@@ -109,10 +114,23 @@ def carregar_dados_sheets():
         col_serie_est = next((c for c in df_est.columns if "SERIE" in c.upper() or "SÉRIE" in c.upper()), None)
         col_id_est = next((c for c in df_est.columns if "IDENTIFICACAO" in c.upper() or "ID" in c.upper()), None)
         
-        if col_serie_est and st.session_state.seriais_consumidos:
-            df_est = df_est[~df_est[col_serie_est].astype(str).str.strip().isin(st.session_state.seriais_consumidos)]
-        if col_id_est and st.session_state.ids_consumidos:
-            df_est = df_est[~df_est[col_id_est].astype(str).str.strip().isin(st.session_state.ids_consumidos)]
+        seriais_para_excluir = set(st.session_state.seriais_consumidos)
+        ids_para_excluir = set(st.session_state.ids_consumidos)
+        
+        # Incorpora automaticamente todos os loggers já utilizados direto da planilha
+        if df_usados is not None and not df_usados.empty:
+            for col in df_usados.columns:
+                col_upper = col.upper()
+                if "SERIE" in col_upper or "SÉRIE" in col_upper:
+                    seriais_para_excluir.update(df_usados[col].dropna().astype(str).str.strip().tolist())
+                if "IDENTIFICACAO" in col_upper or "ID" in col_upper or "ESTOQUE" in col_upper:
+                    ids_para_excluir.update(df_usados[col].dropna().astype(str).str.strip().tolist())
+        
+        # Filtra o estoque removendo qualquer item já utilizado
+        if col_serie_est and seriais_para_excluir:
+            df_est = df_est[~df_est[col_serie_est].astype(str).str.strip().isin(seriais_para_excluir)]
+        if col_id_est and ids_para_excluir:
+            df_est = df_est[~df_est[col_id_est].astype(str).str.strip().isin(ids_para_excluir)]
 
     try:
         df_tes = pd.read_csv(url_tes)
@@ -391,7 +409,7 @@ if st.session_state.pagina_atual == "automacao":
         with c_esq: btn_copia("DEPOSITANTE", val_depositante, "d"); btn_copia("PALETE", val_palete, "p")
         with c_dir: btn_copia("ID ITEM", val_id, "i"); btn_copia("TE DO ESTUDO", val_te, "t")
 
-        # --- CORREÇÃO APLICADA AQUI: Condições independentes para acumular TempTale e Tag Alert ---
+        # --- PARTICULARIDADES COM ACUMULO CORRETO DE TEMPTALE E TAG ALERT ---
         paragrafos = ["Verificar se no processo consta Packing List e atentar se a quantidade, lote e validade está de acordo com as informações retiradas do sistema LOGIX."]
         
         if tem_temptale: 
