@@ -577,11 +577,12 @@ elif st.session_state.pagina_atual == "cruzamento":
                         if medico in texto_sol_upper:
                             s_pi = medico; break
 
-                    # Extração de múltiplos lotes na Solicitação
-                    s_lotes_sol = re.findall(r"\b([A-Z0-9]{5,10}(?:\.[A-Z0-9]+)?)\b", texto_sol_upper)
-                    # Extração de seriais na Solicitação
                     seriais_sol = re.findall(r"\b(\d{6,8})\b", texto_sol_upper)
                     s_qty = str(len(seriais_sol)) if len(seriais_sol) > 0 else "NÃO CONSTA"
+
+                    # Extração rigorosa de lotes na Solicitação (excluindo palavras de cabeçalho)
+                    s_lotes_brutos = re.findall(r"\b([A-Z0-9]{5,10}(?:\.[A-Z0-9]+)?)\b", texto_sol_upper)
+                    s_lotes_sol = [l for l in s_lotes_brutos if l not in ["QUANTITY", "VALIDADE", "LOTE", "MATERIAL", "BATCH", "CLIMATIZADA", "CAMARA"]]
 
 
                     # --- EXTRAÇÃO DOCUMENTO VALIDADO (PACKING LIST) ---
@@ -613,16 +614,14 @@ elif st.session_state.pagina_atual == "cruzamento":
                         if medico in p_shipto_bloco or medico in texto_packing_upper:
                             p_pi = medico; break
 
-                    # Quantidade total de EA na Packing List
                     p_qty_matches = re.findall(r"(\d+)\s*EA", texto_packing_upper)
                     p_qty = str(sum([int(q) for q in p_qty_matches])) if p_qty_matches else "NÃO CONSTA"
 
-                    # Extração de Lotes da Packing List
-                    p_lotes_packing = re.findall(r"BATCH\s*([A-Z0-9\.]+)", texto_packing_upper)
-                    if not p_lotes_packing:
-                        p_lotes_packing = [m for m in re.findall(r"\b([A-Z0-9]{6,10})\b", texto_packing_upper) if any(c.isalpha() for c in m) and any(c.isdigit() for c in m)]
+                    # Extração blindada de lotes da Packing List (ignora "QUANTITY", "BATCH", etc.)
+                    p_lotes_brutos = re.findall(r"\b([A-Z0-9]{5,10}(?:\.[A-Z0-9]+)?)\b", texto_packing_upper)
+                    p_lotes_packing = [l for l in p_lotes_brutos if l not in ["QUANTITY", "BATCH", "MATERIAL", "USE", "DATE", "STORAGE", "SERIAL"]]
 
-                    # Extração de Seriais da Packing List (suporta múltiplos blocos ou parênteses)
+                    # Coleta de Seriais
                     seriais_packing = []
                     serial_matches = re.findall(r"SERIAL\s*NO\.?\s*\(([^)]+)\)", texto_packing_upper)
                     if serial_matches:
@@ -688,8 +687,8 @@ elif st.session_state.pagina_atual == "cruzamento":
                         },
                         {
                             "Campo Validado": "Dados dos Produtos (Batch / Quantity / kit IDs)",
-                            "Documento Fonte": f"Lotes: {', '.join(p_lotes_packing)} | Seriais: {', '.join(seriais_packing)}",
-                            "Documento Validado": f"Lotes: {', '.join(p_lotes_packing)} | Seriais: {', '.join(seriais_packing)}",
+                            "Documento Fonte": f"Lotes: {', '.join(s_lotes_sol[:3])} | Seriais: {', '.join(seriais_packing)}",
+                            "Documento Validado": f"Lotes: {', '.join(p_lotes_packing[:3])} | Seriais: {', '.join(seriais_packing)}",
                             "Status": "✅ Conforme" if s_qty == p_qty and seriais_status_ok else "❌ Divergência",
                             "Observação": "Lotes e seriais conferem." if seriais_status_ok else f"Divergência nos seriais ou lotes: {', '.join(seriais_faltantes)}"
                         }
