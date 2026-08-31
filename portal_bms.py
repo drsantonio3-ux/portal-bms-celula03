@@ -432,17 +432,17 @@ if st.session_state.pagina_atual == "automacao":
         # --- CONSTRUÇÃO DAS PARTICULARIDADES COM REGRAS DE CITOTÓXICOS ---
         paragrafos = ["Verificar se no processo consta Packing List e atentar se a quantidade, lote e validade está de acordo com as informações retiradas do sistema LOGIX."]
         
-        # Inserção das linhas padrão (temperatura e embalagem) baseada na separação do packing
-        if tem_temptale and not cyto_detectados["bortezomib"] and not cyto_detectados["cyclophosphamide"]: 
+        # Inserção das regras base (AGORA AS REGRAS NÃO SOMEM MAIS!)
+        if tem_temptale: 
             paragrafos.extend([
                 "Houve envio de medicação AMBIENTE.", 
                 "As medicações foram acondicionadas em embalagem apropriada CREDO validada pelo cliente com TempTale ULTRA USB ambiente conforme solicitado pelo cliente."
             ])
             
-        if tem_tagalert_amb and not cyto_detectados["sprycel"] and not cyto_detectados["paclitaxel"] and not cyto_detectados["cyclophosphamide"]: 
+        if tem_tagalert_amb: 
             paragrafos.extend([
                 "Houve envio de medicação AMBIENTE.", 
-                "As medicações foram acondicionadas em embalagem apropriada CREDO com Tag Alert ambiente conforme solicitado pelo cliente."
+                "As medicações foram acondicionadas em embalagem CREDO com Tag Alert ambiente conforme solicitado pelo cliente."
             ])
             
         if tem_tagalert_ref: 
@@ -453,9 +453,9 @@ if st.session_state.pagina_atual == "automacao":
             
         paragrafos.append("Time DOC: Não aplicar o desconto padrão de 1 hora na SC de Envio caso o centro já tenha reduzido o período no agendamento.")
         
-        # --- REGRAS ESPECÍFICAS DE CITOTÓXICOS (APENSADAS NO FINAL) ---
+        # --- REGRAS ESPECÍFICAS DE CITOTÓXICOS (SÃO ADICIONADAS AO FINAL DA REGRA BASE) ---
         if cyto_detectados["bortezomib"]:
-            paragrafos.append("") # Quebra de linha visual
+            paragrafos.append("") # Quebra de linha
             paragrafos.extend([
                 "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 6.1” quando houver o envio de “BORTEZOMIB”",
                 "Para envios da medicação BORTEZOMIB, será anexado ficha de segurança do produto.",
@@ -498,7 +498,6 @@ if st.session_state.pagina_atual == "automacao":
                 "Produtos com temperaturas diferentes seguirão em caixas separadas quando houver a necessidade de TT4."
             ])
 
-        # Renderização do botão de cópia com as regras injetadas
         texto_final = "\\n\\n".join([p for p in paragrafos if p != ""]).replace("  ", " ")
         components.html(f"""<button onclick="navigator.clipboard.writeText(`{texto_final}`); this.innerText='📋 Texto Copiado!';" style="background:#e59235; color:white; font-size:13px; font-weight:bold; padding:8px; border:none; border-radius:4px; width:100%; cursor:pointer;">📋 Copiar Particularidades</button>""", height=40)
 
@@ -654,7 +653,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                             dia = partes[0].zfill(2)
                             mes = meses.get(partes[1].upper(), "00")
                             ano = partes[2]
-                            return f"{ano}-{mes}-{dia}" # Ajustado para o padrão visualizado na solicitação
+                            return f"{ano}-{mes}-{dia}"
                         return data_str
 
                     # 1. Extração - Solicitação (Documento Fonte)
@@ -712,7 +711,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                     validar_campo("Delivery / Order Number", s_ordem, p_ordem)
                     validar_campo("Protocolo do Estudo", s_prot, p_prot)
                     
-                    # Tratamento flexível para médico e centro
                     pi_sol_clean = limpar(re.sub(r'^DR\.?\s*', '', s_pi))
                     pi_packing_clean = limpar(re.sub(r'^DR\.?\s*', '', p_pi))
                     validar_campo("Investigador / Médico", pi_sol_clean, pi_packing_clean, flexivel=True)
@@ -729,9 +727,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                             nome_med = limpar(desc_pk)
                             val_convertida = converter_data_ingles_para_pt(val_pk)
                             
-                            # Verifica se o Serial existe no texto da Solicitação
                             if serial_pk in texto_sol_limpo:
-                                # Verifica o lote (removendo pontuações para evitar erro de formatação)
                                 lote_sol = "Lote OK" if re.sub(r'[\.\s\-\/]', '', lote_pk) in re.sub(r'[\.\s\-\/]', '', texto_sol_limpo) else "Lote Divergente"
                                 val_sol = "Validade OK" if val_convertida in texto_sol_limpo or val_pk in texto_sol_limpo else "Validade Divergente"
                                 
@@ -764,7 +760,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                     # Renderiza o Pandas DataFrame no Streamlit
                     df_resultado = pd.DataFrame(resultados)
                     
-                    # Define a cor baseada no status geral
                     if "❌ Divergência" in df_resultado["Status"].values:
                         st.error("🚨 **OPERAÇÃO BLOQUEADA: Divergências Encontradas na Conferência**")
                     else:
@@ -772,7 +767,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                         
                     st.markdown("### 📊 Tabela de Validação")
                     
-                    # Estilização condicional do dataframe
                     def color_status(val):
                         if val == "✅ Conforme": return 'color: #155724; background-color: #d4edda; font-weight: bold'
                         elif val == "❌ Divergência": return 'color: #721c24; background-color: #f8d7da; font-weight: bold'
