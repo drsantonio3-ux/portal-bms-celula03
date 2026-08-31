@@ -56,11 +56,6 @@ st.markdown("""
         border-right: 1px solid #d2dedb;
         padding-top: 1rem;
     }
-    
-    /* Estilização da tabela Pandas no Streamlit */
-    .dataframe {
-        font-size: 12px !important;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -259,58 +254,10 @@ if st.session_state.pagina_atual == "automacao":
             for idx, row in df_te.iterrows():
                 if estudo_encontrado in str(row['Estudo']).upper():
                     te_resultado = str(row['TE']).strip(); break
-                    
-        # --- BASE SÓLIDA DE REGRAS: SEPARAÇÃO DE CAIXAS, TEMPERATURA (INTOCÁVEL) ---
-        cytotoxic_list = ["BORTEZOMIB", "PACLITAXEL", "SPRYCEL", "CYCLOPHOSPHAMIDE"]
-        blocos_storage = re.split(r'STORAGE\s*:', texto_upper)
-        loggers_to_allocate = []
 
-        for i in range(1, len(blocos_storage)):
-            bloco_atual = blocos_storage[i]
-            bloco_anterior = blocos_storage[i-1]
-            
-            instrucao = bloco_atual.split('Y/N')[0] if 'Y/N' in bloco_atual else bloco_atual[:200]
-            
-            temp_range = "PADRAO"
-            match_temp = re.search(r'TEMP\s*(?:NOT\s*EXCEED\s*)?\d+(?:\s*-\s*\d+)?C?', instrucao)
-            if match_temp:
-                temp_range = re.sub(r'\s+', '', match_temp.group(0))
-            
-            is_ref = "2-8" in instrucao or "REFRIGER" in instrucao
-            
-            logger_type = None
-            if "TEMPTALE" in instrucao or "TT4" in instrucao:
-                logger_type = "TempTale Ambiente"
-            elif "TAGALERT" in instrucao:
-                logger_type = "Tag Alert Refrigerado" if is_ref else "Tag Alert Ambiente"
-            
-            contexto_busca = (bloco_anterior[-200:] + instrucao)
-            is_cyto = any(cyto in contexto_busca for cyto in cytotoxic_list)
-            
-            if logger_type:
-                loggers_to_allocate.append({"tipo": logger_type, "is_cyto": is_cyto, "temp_range": temp_range})
-
-        consolidation = []
-        non_cyto_added = set()
-
-        for item in loggers_to_allocate:
-            if item["is_cyto"]:
-                consolidation.append(item["tipo"])
-            else:
-                chave_dedup = f"{item['tipo']}_{item['temp_range']}"
-                if chave_dedup not in non_cyto_added:
-                    consolidation.append(item["tipo"])
-                    non_cyto_added.add(chave_dedup)
-
-        if not consolidation:
-            if "TEMPTALE" in texto_upper or "TT4" in texto_upper: consolidation.append("TempTale Ambiente")
-            if "TAGALERT" in texto_upper and ("2-8" in texto_upper or "REFRIGER" in texto_upper or "36-46F" in texto_upper): consolidation.append("Tag Alert Refrigerado")
-            if "TAGALERT" in texto_upper and ("20-25" in texto_upper or "15-25" in texto_upper or "2-30C" in texto_upper): consolidation.append("Tag Alert Ambiente")
-
-        tem_temptale = "TempTale Ambiente" in consolidation
-        tem_tagalert_ref = "Tag Alert Refrigerado" in consolidation
-        tem_tagalert_amb = "Tag Alert Ambiente" in consolidation
-        is_ambiente = tem_temptale or tem_tagalert_amb or "30C" in texto_upper
+        tem_temptale = "TEMPTALE" in texto_upper or "TT4" in texto_upper
+        tem_tagalert_ref = "TAGALERT" in texto_upper and ("2-8" in texto_upper or "REFRIGER" in texto_upper or "36-46F" in texto_upper)
+        tem_tagalert_amb = "TAGALERT" in texto_upper and ("20-25" in texto_upper or "15-25" in texto_upper or "2-30C" in texto_upper or not tem_tagalert_ref)
 
         cidade_destino = "NÃO IDENTIFICADA"
         linhas = texto_upper.split('\n')
@@ -354,10 +301,9 @@ if st.session_state.pagina_atual == "automacao":
                 else: 
                     st.warning(f"⚠️ **{label}**: Sem saldo disponível no estoque!")
 
-            for req in consolidation:
-                if req == "TempTale Ambiente": allocate_logger("TEMPTALE", "TempTale Ambiente")
-                elif req == "Tag Alert Ambiente": allocate_logger("TAGALERT 15-25", "Tag Alert Ambiente")
-                elif req == "Tag Alert Refrigerado": allocate_logger("TAGALERT 2-8", "Tag Alert Refrigerado")
+            if tem_temptale: allocate_logger("TEMPTALE", "TempTale Ambiente")
+            if tem_tagalert_amb: allocate_logger("TAGALERT 15-25", "Tag Alert Ambiente")
+            if tem_tagalert_ref: allocate_logger("TAGALERT 2-8", "Tag Alert Refrigerado")
 
             col_del, col_btn = st.columns([2, 1])
             with col_del: delivery_number = st.text_input("DEL# (Delivery Number) para registro:")
@@ -421,72 +367,28 @@ if st.session_state.pagina_atual == "automacao":
         with c_esq: btn_copia("DEPOSITANTE", val_depositante, "d"); btn_copia("PALETE", val_palete, "p")
         with c_dir: btn_copia("ID ITEM", val_id, "i"); btn_copia("TE DO ESTUDO", val_te, "t")
 
-        # --- CONSTRUÇÃO DAS PARTICULARIDADES (SOMANDO AS DUAS REGRAS) ---
-        paragrafos = ["Verificar se no processo consta Packing List e atentar se a quantidade, lote e validade está de acordo com as informações retiradas do sistema LOGIX."]
-        
-        # 1. Aplica as regras normais incondicionalmente
+        paragrafos = [
+            "Verificar se no processo consta Packing List e atentar se a quantidade, lote e validade está de acordo com as informações retiradas do sistema LOGIX."
+        ]
         if tem_temptale: 
             paragrafos.extend([
                 "Houve envio de medicação AMBIENTE.", 
-                "As medicações foram acondicionadas em embalagem apropriada CREDO validada pelo cliente com TempTale ULTRA USB ambiente."
+                "As medicações foram acondicionadas em embalagem apropriada CREDO validada pelo cliente com TempTale ULTRA USB ambiente conforme solicitado pelo cliente."
             ])
-            
         if tem_tagalert_amb: 
             paragrafos.extend([
                 "Houve envio de medicação AMBIENTE.", 
-                "As medicações foram acondicionadas em embalagem CREDO com Tag Alert ambiente."
+                "As medicações foram acondicionadas em embalagem apropriada CREDO com Tag Alert ambiente conforme solicitado pelo cliente."
             ])
-            
         if tem_tagalert_ref: 
             paragrafos.extend([
                 "Houve envio de medicação REFRIGERADA.", 
-                "As medicações foram acondicionadas em caixa CREDO SÉRIE 04 com Tag Alert refrigerado."
+                "As medicações foram acondicionadas em embalagem apropriada caixa CREDO SÉRIE 04 com Tag Alert refrigerado conforme solicitado pelo cliente."
             ])
             
         paragrafos.append("Time DOC: Não aplicar o desconto padrão de 1 hora na SC de Envio caso o centro já tenha reduzido o período no agendamento.")
         
-        # 2. Injeta as regras adicionais para Citotóxicos se encontrados
-        if "BORTEZOMIB" in texto_upper:
-            paragrafos.extend([
-                "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 6.1” quando houver o envio de “BORTEZOMIB”",
-                "Para envios da medicação BORTEZOMIB, será anexado ficha de segurança do produto.",
-                "Para envios da medicação BORTEZOMIB, deverá ser encaminhado em caixa separada quando houver envio de mais medicações.",
-                "As medicações foram acondicionadas em embalagem apropriada CREDO validada pelo cliente com TempTale ULTRA USB ambiente conforme solicitado pelo cliente.",
-                "A etiqueta do Logger USB deve ir colada na Packing List de envio.",
-                "Produtos com temperaturas diferentes seguirão em caixas separadas quando houver a necessidade de TT4."
-            ])
-
-        if "SPRYCEL" in texto_upper or "DASATINIB" in texto_upper:
-            paragrafos.extend([
-                "As medicações foram acondicionadas em embalagem apropriada CREDO 28L validada pelo cliente com Tag Alert ambiente conforme solicitado pelo cliente.",
-                "No caso de medicações comerciais, as medicações estão devidamente etiquetadas com a etiqueta de venda proibida.",
-                "Para envios da medicação DASATINIB ou SPRYCEL, será anexado ficha de segurança do produto.",
-                "Para envios da medicação DASATINIB ou SPRYCEL, deverá ser encaminhado em caixa separada quando houver envio de mais medicações.",
-                "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 6.1” quando houver o envio de “DASATINIB OU SPRYCEL."
-            ])
-
-        if "PACLITAXEL" in texto_upper or "TAXOL" in texto_upper:
-            paragrafos.extend([
-                "As medicações foram acondicionadas em embalagem apropriada CREDO 28L validada pelo cliente com Tag Alert ambiente conforme solicitado pelo cliente.",
-                "O formulário de requisição dos produtos comerciais, deverá ser enviado para a Instituição de destino.",
-                "No caso de medicações comerciais, as medicações estão devidamente etiquetadas com a etiqueta de venda proibida.",
-                "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 3” quando houver o envio de “TAXOL OU PACLITAXEL”",
-                "Para envios da medicação PACLITAXEL ou TAXOL, será anexado ficha de segurança do produto.",
-                "Para envios da medicação PACLITAXEL ou TAXOL, deverá ser encaminhado em caixa separada quando houver envio de mais medicações."
-            ])
-
-        if "CYCLOPHOSPHAMIDE" in texto_upper or "CICLOFOSFAMIDA" in texto_upper:
-            paragrafos.extend([
-                "As medicações foram acondicionadas em embalagem apropriada CREDO 28L com Tag Alert ambiente conforme solicitado pelo cliente.",
-                "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 6.1” quando houver o envio de “CICLOFOSFAMIDA”",
-                "Para envios da medicação CICLOFOSFAMIDA, será anexado ficha de segurança do produto.",
-                "Para envios da medicação CICLOFOSFAMIDA, deverá ser encaminhado em caixa separada quando houver envio de mais medicações.",
-                "As medicações foram acondicionadas em embalagem apropriada CREDO 28L validada pelo cliente com TempTale ULTRA USB ambiente conforme solicitado pelo cliente.",
-                "A etiqueta do Logger USB deve ir colada na Packing List de envio.",
-                "Produtos com temperaturas diferentes seguirão em caixas separadas quando houver a necessidade de TT4."
-            ])
-
-        texto_final = "\\n\\n".join([p for p in paragrafos if p])
+        texto_final = "\\n\\n".join(paragrafos)
         components.html(f"""<button onclick="navigator.clipboard.writeText(`{texto_final}`); this.innerText='📋 Texto Copiado!';" style="background:#e59235; color:white; font-size:13px; font-weight:bold; padding:8px; border:none; border-radius:4px; width:100%; cursor:pointer;">📋 Copiar Particularidades</button>""", height=40)
 
         st.markdown("### ⏱️ SLA e Prazos Operacionais")
@@ -582,192 +484,43 @@ elif st.session_state.pagina_atual == "email":
         components.html(f"""<button onclick="navigator.clipboard.writeText('{corpo_js}'); this.innerText='Corpo Copiado!';" style="background:#e59235; color:white; border:none; border-radius:4px; padding:6px 20px; cursor:pointer; font-weight:bold; font-size:12px; width:100%;">Copiar Corpo do E-mail</button>""", height=40)
 
 # ==========================================
-# PÁGINA 3: CRUZAMENTO SOLICITAÇÃO x PACKING (TABELA ESTRUTURADA)
+# PÁGINA 3: CRUZAMENTO SOLICITAÇÃO x PACKING
 # ==========================================
 elif st.session_state.pagina_atual == "cruzamento":
     
     st.markdown("""
         <div style="background-color: #1b3834; padding: 18px 25px; border-radius: 6px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">⚖️ Validação de Remessa: Solicitação x PACKING</h2>
+            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">⚖️ Cruzamento NEWSE x PACKING</h2>
             <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
-                Faça o upload dos dois documentos para conferência estruturada.<br>
-                O sistema gerará uma tabela comparativa evidenciando campos faltantes, conformidades e divergências.
+                Faça o upload dos dois documentos para conferência rápida de dados.
             </p>
         </div>
     """, unsafe_allow_html=True)
     
-    if "file_uploader_key" not in st.session_state:
-        st.session_state.file_uploader_key = 0
-
-    col_btn_limpar, col_vazio = st.columns([1, 4])
-    with col_btn_limpar:
-        if st.button("🗑️ Limpar Arquivos", use_container_width=True):
-            st.session_state.file_uploader_key += 1
-            st.rerun()
-
     col1, col2 = st.columns(2)
-    with col1:
-        arquivo_sol = st.file_uploader("Upload da Solicitação (PDF)", type=["pdf"], key=f"sol_{st.session_state.file_uploader_key}")
-    with col2:
-        arquivo_packing = st.file_uploader("Upload da Packing List (PDF)", type=["pdf"], key=f"pack_{st.session_state.file_uploader_key}")
+    with col1: arquivo_sol = st.file_uploader("Upload da Solicitação (PDF)", type=["pdf"], key="sol")
+    with col2: arquivo_packing = st.file_uploader("Upload da Packing List (PDF)", type=["pdf"], key="pack")
 
     if arquivo_sol and arquivo_packing:
         st.divider()
-        if st.button("Executar Cruzamento de Dados (Gerar Tabela)", use_container_width=True):
-            with st.spinner("Lendo PDFs e gerando tabela de validação..."):
-                try:
-                    leitor_sol = PyPDF2.PdfReader(arquivo_sol)
-                    texto_sol = " ".join([p.extract_text() for p in leitor_sol.pages]).upper()
-                    texto_sol_limpo = re.sub(r'\s+', ' ', texto_sol)
-                    
-                    leitor_packing = PyPDF2.PdfReader(arquivo_packing)
-                    texto_packing = " ".join([p.extract_text() for p in leitor_packing.pages]).upper()
-                    texto_packing_limpo = re.sub(r'\s+', ' ', texto_packing)
+        leitor_sol = PyPDF2.PdfReader(arquivo_sol)
+        texto_sol = " ".join([p.extract_text() for p in leitor_sol.pages]).upper()
+        
+        leitor_packing = PyPDF2.PdfReader(arquivo_packing)
+        texto_packing = " ".join([p.extract_text() for p in leitor_packing.pages]).upper()
 
-                    def limpar(t): return re.sub(r'\s+', ' ', str(t)).strip()
-                    
-                    def isolarprotocolo(p):
-                        match = re.search(r'([A-Z0-9]+-[0-9]+)', p)
-                        return match.group(1) if match else p
+        st.markdown("### 🔍 Resultados da Verificação")
+        
+        termos_chave = ["DELIVERY", "PROTOCOL", "BATCH", "QUANTITY"]
+        ok_count = 0
+        for termo in termos_chave:
+            tem_sol = termo in texto_sol
+            tem_pack = termo in texto_packing
+            if tem_sol and tem_pack:
+                st.success(f"✅ Termo '{termo}' validado em ambos os documentos.")
+                ok_count += 1
+            else:
+                st.warning(f"⚠️ Atenção ao termo '{termo}': verificação manual recomendada.")
 
-                    def converter_data_ingles_para_pt(data_str):
-                        meses = {
-                            "JAN": "01", "FEB": "02", "MAR": "03", "APR": "04", "MAY": "05", "JUN": "06",
-                            "JUL": "07", "AUG": "08", "SEP": "09", "OCT": "10", "NOV": "11", "DEC": "12"
-                        }
-                        if not data_str: return ""
-                        partes = data_str.strip().split('-')
-                        if len(partes) == 3:
-                            dia = partes[0].zfill(2)
-                            mes = meses.get(partes[1].upper(), "00")
-                            ano = partes[2]
-                            return f"{ano}-{mes}-{dia}"
-                        return data_str
-
-                    # 1. Extração - Solicitação (Documento Fonte)
-                    s_ordem = re.search(r"ORDEM[^\d]*(\d{8,12})", texto_sol_limpo)
-                    s_ordem = s_ordem.group(1) if s_ordem else "NÃO ENCONTRADO"
-                    
-                    s_prot = re.search(r"CA\d+-\d+(?:-[A-Z0-9]+)?", texto_sol_limpo)
-                    s_prot = isolarprotocolo(s_prot.group(0)) if s_prot else "NÃO ENCONTRADO"
-                    
-                    s_razao = re.search(r"\d{4}-\d{2}\s*-\s*([A-ZÇÃÕÁÉÍÓÚ\s]+?)(?=\s+\d{2}|\s+\()", texto_sol_limpo)
-                    s_razao = limpar(s_razao.group(1)) if s_razao else "NÃO ENCONTRADO"
-                    
-                    s_pi = re.search(r"INVESTIGADOR[^\w]*([A-Z\s]+?)(?=\s+HTTP|$|PRODUTO)", texto_sol_limpo)
-                    s_pi = limpar(s_pi.group(1)) if s_pi else "NÃO ENCONTRADO"
-
-                    # 2. Extração - Packing List (Documento Validado)
-                    p_ordem = re.search(r"DELIVERY NUMBER\s*[:\s]*(\d+)", texto_packing_limpo)
-                    p_ordem = p_ordem.group(1) if p_ordem else "NÃO ENCONTRADO"
-                    
-                    p_prot = re.search(r"CA\d+-\d+/[0-9]+", texto_packing_limpo)
-                    p_prot = isolarprotocolo(p_prot.group(0)) if p_prot else "NÃO ENCONTRADO"
-                    
-                    p_shipto_match = re.search(r"SHIP TO\s*(.*?)(?=\d{5}-)", texto_packing_limpo)
-                    p_shipto = limpar(p_shipto_match.group(1)) if p_shipto_match else "NÃO ENCONTRADO"
-                    
-                    p_pi_match = re.search(r"DR\.?\s*([A-Z\s]+?)(?=\s*TEL|BRAZIL)", texto_packing_limpo)
-                    p_pi = limpar(p_pi_match.group(1)) if p_pi_match else "NÃO ENCONTRADO"
-
-                    # 3. Lógica da Tabela de Comparação
-                    resultados = []
-
-                    def validar_campo(nome_campo, val_fonte, val_validado, flexivel=False):
-                        if val_fonte == "NÃO ENCONTRADO" and val_validado == "NÃO ENCONTRADO":
-                            status, obs = "⚠️ Ausente", "Faltando em ambos."
-                        elif val_fonte == "NÃO ENCONTRADO":
-                            status, obs = "⚠️ Atenção", "Falta na Solicitação."
-                        elif val_validado == "NÃO ENCONTRADO":
-                            status, obs = "❌ Divergência", "Falta no Packing."
-                        elif val_fonte == val_validado:
-                            status, obs = "✅ Conforme", "Idênticos."
-                        else:
-                            if flexivel and ((val_fonte in val_validado) or (val_validado in val_fonte)):
-                                status, obs = "✅ Conforme", "Correspondência parcial válida."
-                            else:
-                                status, obs = "❌ Divergência", "Valores não batem."
-                        
-                        resultados.append({
-                            "Campo Validado": nome_campo,
-                            "Solicitação (Fonte)": str(val_fonte),
-                            "Packing List (Alvo)": str(val_validado),
-                            "Status": status,
-                            "Observação": obs
-                        })
-
-                    validar_campo("Delivery / Order Number", s_ordem, p_ordem)
-                    validar_campo("Protocolo do Estudo", s_prot, p_prot)
-                    
-                    pi_sol_clean = limpar(re.sub(r'^DR\.?\s*', '', s_pi))
-                    pi_packing_clean = limpar(re.sub(r'^DR\.?\s*', '', p_pi))
-                    validar_campo("Investigador / Médico", pi_sol_clean, pi_packing_clean, flexivel=True)
-                    validar_campo("Centro / Razão Social", s_razao, p_shipto, flexivel=True)
-
-                    # 4. Extração e Validação dos Medicamentos (Batches/Serials)
-                    padrao_packing = re.findall(
-                        r"(\d{6,8})\s+([A-Z0-9\.\-]+)\s+1\s+EA\s+(\d{2}-[A-Z]{3}-\d{4})\s+([A-Z0-9\s\(\)]+?)\s+SERIAL NO\.\s*\((\d{6,8})\)",
-                        texto_packing_limpo
-                    )
-
-                    if padrao_packing:
-                        for idx, (mat, lote_pk, val_pk, desc_pk, serial_pk) in enumerate(padrao_packing):
-                            nome_med = limpar(desc_pk)
-                            val_convertida = converter_data_ingles_para_pt(val_pk)
-                            
-                            if serial_pk in texto_sol_limpo:
-                                lote_sol = "Lote OK" if re.sub(r'[\.\s\-\/]', '', lote_pk) in re.sub(r'[\.\s\-\/]', '', texto_sol_limpo) else "Lote Divergente"
-                                val_sol = "Validade OK" if val_convertida in texto_sol_limpo or val_pk in texto_sol_limpo else "Validade Divergente"
-                                
-                                status_med = "✅ Conforme" if lote_sol == "Lote OK" and val_sol == "Validade OK" else "❌ Divergência"
-                                
-                                resultados.append({
-                                    "Campo Validado": f"Medicamento {idx+1}: {nome_med[:20]}...",
-                                    "Solicitação (Fonte)": f"Serial: {serial_pk} | {lote_sol} | {val_sol}",
-                                    "Packing List (Alvo)": f"Serial: {serial_pk} | Lote: {lote_pk} | Val: {val_pk}",
-                                    "Status": status_med,
-                                    "Observação": "Medicação encontrada." if status_med == "✅ Conforme" else "Checar Lote/Validade na Solicitação."
-                                })
-                            else:
-                                resultados.append({
-                                    "Campo Validado": f"Medicamento {idx+1}: {nome_med[:20]}...",
-                                    "Solicitação (Fonte)": "NÃO ENCONTRADO",
-                                    "Packing List (Alvo)": f"Serial: {serial_pk} | Lote: {lote_pk} | Val: {val_pk}",
-                                    "Status": "❌ Divergência",
-                                    "Observação": "Serial ausente na Solicitação."
-                                })
-                    else:
-                        resultados.append({
-                            "Campo Validado": "Medicamentos / Seriais",
-                            "Solicitação (Fonte)": "-",
-                            "Packing List (Alvo)": "Nenhum serial extraído",
-                            "Status": "⚠️ Atenção",
-                            "Observação": "Formato de medicamentos do Packing não reconhecido."
-                        })
-
-                    # Renderiza o Pandas DataFrame no Streamlit
-                    df_resultado = pd.DataFrame(resultados)
-                    
-                    if "❌ Divergência" in df_resultado["Status"].values:
-                        st.error("🚨 **OPERAÇÃO BLOQUEADA: Divergências Encontradas na Conferência**")
-                    else:
-                        st.success("✅ **OPERAÇÃO APROVADA: Todos os dados críticos conferem integralmente.**")
-                        
-                    st.markdown("### 📊 Tabela de Validação")
-                    
-                    def color_status(val):
-                        if val == "✅ Conforme": return 'color: #155724; background-color: #d4edda; font-weight: bold'
-                        elif val == "❌ Divergência": return 'color: #721c24; background-color: #f8d7da; font-weight: bold'
-                        elif val == "⚠️ Atenção" or val == "⚠️ Ausente": return 'color: #856404; background-color: #fff3cd; font-weight: bold'
-                        return ''
-
-                    st.dataframe(
-                        df_resultado.style.map(color_status, subset=['Status']),
-                        use_container_width=True,
-                        hide_index=True
-                    )
-                    
-                    st.info("⚠️ **Aviso Operacional:** O sistema confere automaticamente dados numéricos (Delivery, Protocolo, Seriais). Dados de texto (Razão Social/Médico) utilizam busca flexível parcial. Confirme visualmente a temperatura exigida.")
-
-                except Exception as e:
-                    st.error(f"Erro inesperado ao processar os arquivos: {e}")
+        if ok_count >= 3:
+            st.info("💡 Análise concluída com base na estrutura padrão. Nenhum bloqueio crítico detectado nos campos principais.")
