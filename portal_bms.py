@@ -260,16 +260,8 @@ if st.session_state.pagina_atual == "automacao":
                 if estudo_encontrado in str(row['Estudo']).upper():
                     te_resultado = str(row['TE']).strip(); break
                     
-        # --- DETECÇÃO DE CITOTÓXICOS ESPECÍFICOS ---
-        cyto_detectados = {
-            "bortezomib": "BORTEZOMIB" in texto_upper,
-            "sprycel": "SPRYCEL" in texto_upper or "DASATINIB" in texto_upper,
-            "paclitaxel": "PACLITAXEL" in texto_upper or "TAXOL" in texto_upper,
-            "cyclophosphamide": "CYCLOPHOSPHAMIDE" in texto_upper or "CICLOFOSFAMIDA" in texto_upper
-        }
-
-        # --- MOTOR DE REGRAS: SEPARAÇÃO DE CAIXAS E TEMPERATURA ---
-        cytotoxic_list = ["BORTEZOMIB", "PACLITAXEL", "SPRYCEL", "CYCLOPHOSPHAMIDE", "DASATINIB", "TAXOL", "CICLOFOSFAMIDA"]
+        # --- BASE SÓLIDA DE REGRAS: SEPARAÇÃO DE CAIXAS, TEMPERATURA (INTOCÁVEL) ---
+        cytotoxic_list = ["BORTEZOMIB", "PACLITAXEL", "SPRYCEL", "CYCLOPHOSPHAMIDE"]
         blocos_storage = re.split(r'STORAGE\s*:', texto_upper)
         loggers_to_allocate = []
 
@@ -429,33 +421,32 @@ if st.session_state.pagina_atual == "automacao":
         with c_esq: btn_copia("DEPOSITANTE", val_depositante, "d"); btn_copia("PALETE", val_palete, "p")
         with c_dir: btn_copia("ID ITEM", val_id, "i"); btn_copia("TE DO ESTUDO", val_te, "t")
 
-        # --- CONSTRUÇÃO DAS PARTICULARIDADES COM REGRAS DE CITOTÓXICOS ---
+        # --- CONSTRUÇÃO DAS PARTICULARIDADES (SOMANDO AS DUAS REGRAS) ---
         paragrafos = ["Verificar se no processo consta Packing List e atentar se a quantidade, lote e validade está de acordo com as informações retiradas do sistema LOGIX."]
         
-        # Inserção das regras base (AGORA AS REGRAS NÃO SOMEM MAIS!)
+        # 1. Aplica as regras normais incondicionalmente
         if tem_temptale: 
             paragrafos.extend([
                 "Houve envio de medicação AMBIENTE.", 
-                "As medicações foram acondicionadas em embalagem apropriada CREDO validada pelo cliente com TempTale ULTRA USB ambiente conforme solicitado pelo cliente."
+                "As medicações foram acondicionadas em embalagem apropriada CREDO validada pelo cliente com TempTale ULTRA USB ambiente."
             ])
             
         if tem_tagalert_amb: 
             paragrafos.extend([
                 "Houve envio de medicação AMBIENTE.", 
-                "As medicações foram acondicionadas em embalagem CREDO com Tag Alert ambiente conforme solicitado pelo cliente."
+                "As medicações foram acondicionadas em embalagem CREDO com Tag Alert ambiente."
             ])
             
         if tem_tagalert_ref: 
             paragrafos.extend([
                 "Houve envio de medicação REFRIGERADA.", 
-                "As medicações foram acondicionadas em embalagem apropriada caixa CREDO SÉRIE 04 com Tag Alert refrigerado conforme solicitado pelo cliente."
+                "As medicações foram acondicionadas em caixa CREDO SÉRIE 04 com Tag Alert refrigerado."
             ])
             
         paragrafos.append("Time DOC: Não aplicar o desconto padrão de 1 hora na SC de Envio caso o centro já tenha reduzido o período no agendamento.")
         
-        # --- REGRAS ESPECÍFICAS DE CITOTÓXICOS (SÃO ADICIONADAS AO FINAL DA REGRA BASE) ---
-        if cyto_detectados["bortezomib"]:
-            paragrafos.append("") # Quebra de linha
+        # 2. Injeta as regras adicionais para Citotóxicos se encontrados
+        if "BORTEZOMIB" in texto_upper:
             paragrafos.extend([
                 "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 6.1” quando houver o envio de “BORTEZOMIB”",
                 "Para envios da medicação BORTEZOMIB, será anexado ficha de segurança do produto.",
@@ -465,8 +456,7 @@ if st.session_state.pagina_atual == "automacao":
                 "Produtos com temperaturas diferentes seguirão em caixas separadas quando houver a necessidade de TT4."
             ])
 
-        if cyto_detectados["sprycel"]:
-            paragrafos.append("")
+        if "SPRYCEL" in texto_upper or "DASATINIB" in texto_upper:
             paragrafos.extend([
                 "As medicações foram acondicionadas em embalagem apropriada CREDO 28L validada pelo cliente com Tag Alert ambiente conforme solicitado pelo cliente.",
                 "No caso de medicações comerciais, as medicações estão devidamente etiquetadas com a etiqueta de venda proibida.",
@@ -475,8 +465,7 @@ if st.session_state.pagina_atual == "automacao":
                 "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 6.1” quando houver o envio de “DASATINIB OU SPRYCEL."
             ])
 
-        if cyto_detectados["paclitaxel"]:
-            paragrafos.append("")
+        if "PACLITAXEL" in texto_upper or "TAXOL" in texto_upper:
             paragrafos.extend([
                 "As medicações foram acondicionadas em embalagem apropriada CREDO 28L validada pelo cliente com Tag Alert ambiente conforme solicitado pelo cliente.",
                 "O formulário de requisição dos produtos comerciais, deverá ser enviado para a Instituição de destino.",
@@ -486,8 +475,7 @@ if st.session_state.pagina_atual == "automacao":
                 "Para envios da medicação PACLITAXEL ou TAXOL, deverá ser encaminhado em caixa separada quando houver envio de mais medicações."
             ])
 
-        if cyto_detectados["cyclophosphamide"]:
-            paragrafos.append("")
+        if "CYCLOPHOSPHAMIDE" in texto_upper or "CICLOFOSFAMIDA" in texto_upper:
             paragrafos.extend([
                 "As medicações foram acondicionadas em embalagem apropriada CREDO 28L com Tag Alert ambiente conforme solicitado pelo cliente.",
                 "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 6.1” quando houver o envio de “CICLOFOSFAMIDA”",
@@ -498,7 +486,7 @@ if st.session_state.pagina_atual == "automacao":
                 "Produtos com temperaturas diferentes seguirão em caixas separadas quando houver a necessidade de TT4."
             ])
 
-        texto_final = "\\n\\n".join([p for p in paragrafos if p != ""]).replace("  ", " ")
+        texto_final = "\\n\\n".join([p for p in paragrafos if p])
         components.html(f"""<button onclick="navigator.clipboard.writeText(`{texto_final}`); this.innerText='📋 Texto Copiado!';" style="background:#e59235; color:white; font-size:13px; font-weight:bold; padding:8px; border:none; border-radius:4px; width:100%; cursor:pointer;">📋 Copiar Particularidades</button>""", height=40)
 
         st.markdown("### ⏱️ SLA e Prazos Operacionais")
