@@ -576,11 +576,13 @@ elif st.session_state.pagina_atual == "cruzamento":
                     elif "MARIZA SCHAAN" in texto_sol_upper:
                         s_pi = "MARIZA SCHAAN"
 
-                    s_lotes_sol = re.findall(r"\b(MA\d{4,6}[A-Z]*|ADC\d{4})\b", texto_sol_upper)
-                    s_qty = str(len(s_lotes_sol)) if len(s_lotes_sol) > 0 else "NÃO CONSTA"
-
+                    # Extração rigorosa de lote na Solicitação
                     s_lote_match = re.search(r"\b(ADC\d{3,6}|MA\d{3,6}[A-Z\.]*)\b", texto_sol_upper)
                     s_lote = s_lote_match.group(1) if s_lote_match else "NÃO CONSTA"
+
+                    # Quantidade baseada na contagem de seriais reais listados na solicitação
+                    seriais_sol = re.findall(r"\b(113\d{4}|571\d{2})\b", texto_sol_upper)
+                    s_qty = str(len(seriais_sol)) if len(seriais_sol) > 0 else (re.search(r"QUANTIDADE\s*[:\s]*(\d+)", texto_sol_upper).group(1) if re.search(r"QUANTIDADE\s*[:\s]*(\d+)", texto_sol_upper) else "NÃO CONSTA")
 
 
                     # --- EXTRAÇÃO DOCUMENTO VALIDADO (PACKING LIST) ---
