@@ -581,7 +581,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                     s_cep_match = re.search(r"CEP[^\d]*(\d{8})", texto_sol_upper)
                     s_addr = s_cep_match.group(1) if s_cep_match else (re.search(r"\b(\d{8})\b", texto_sol_upper).group(1) if re.search(r"\b(\d{8})\b", texto_sol_upper) else "90610000")
 
-                    # Busca o CEP específico do bloco "Ship To" na packing list (evitando o de São Paulo 04719-002)
                     p_shipto_bloco = texto_packing_upper.split("SHIP TO")[-1] if "SHIP TO" in texto_packing_upper else texto_packing_upper
                     p_cep_match = re.search(r"(\d{5}-?\d{3})", p_shipto_bloco)
                     p_addr = p_cep_match.group(1).replace("-", "") if p_cep_match else "90610000"
@@ -597,12 +596,12 @@ elif st.session_state.pagina_atual == "cruzamento":
                     s_qty_matches = re.findall(r"113\d+", texto_sol_upper)
                     s_qty = str(len(s_qty_matches)) if len(s_qty_matches) > 0 else p_qty
 
-                    # 7. Dados dos Produtos (Lote real e Seriais)
-                    s_lote_match = re.search(r"(?:ADC\d+|MA\d+|LOTE[:\s]*)([A-Z0-9\.]+)", texto_sol_upper)
-                    s_lote = "ADC4491" if "ADC4491" in texto_sol_upper else (s_lote_match.group(1) if s_lote_match else "ADC4491")
+                    # 7. Dados dos Produtos (Lote real via padrão ADC/MA e Seriais)
+                    s_lote_match = re.search(r"\b(ADC\d+|MA\d+)\b", texto_sol_upper)
+                    s_lote = s_lote_match.group(1) if s_lote_match else "ADC4491"
 
-                    p_lote_match = re.search(r"(?:ADC\d+|MA\d+|BATCH[:\s]*)([A-Z0-9\.]+)", texto_packing_upper)
-                    p_lote = "ADC4491" if "ADC4491" in texto_packing_upper else (p_lote_match.group(1) if p_lote_match else "ADC4491")
+                    p_lote_match = re.search(r"\b(ADC\d+|MA\d+)\b", texto_packing_upper)
+                    p_lote = p_lote_match.group(1) if p_lote_match else "ADC4491"
 
                     # Extração de Seriais do Packing
                     serial_match = re.search(r"SERIAL\s*NO\.?\s*\(([^)]+)\)", texto_packing_upper)
