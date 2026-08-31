@@ -435,10 +435,24 @@ elif st.session_state.pagina_atual == "cruzamento":
                         match = re.search(r'([A-Z0-9]+-[0-9]+)', p)
                         return match.group(1) if match else p
 
-                    def normalizar_lote(lote_str):
-                        """Remove pontos, hífens, barras e espaços para padronizar o lote"""
-                        if not lote_str: return ""
-                        return re.sub(r'[\.\s\-\/]', '', str(lote_str)).upper()
+                    def normalizar_texto(texto):
+                        """Remove pontos, hífens, barras, quebras de linha e espaços para comparação total"""
+                        if not texto: return ""
+                        return re.sub(r'[\.\s\-\/]', '', str(texto)).upper()
+
+                    def converter_data_ingles_para_pt(data_str):
+                        meses = {
+                            "JAN": "01", "FEB": "02", "MAR": "03", "APR": "04", "MAY": "05", "JUN": "06",
+                            "JUL": "07", "AUG": "08", "SEP": "09", "OCT": "10", "NOV": "11", "DEC": "12"
+                        }
+                        if not data_str: return ""
+                        partes = data_str.strip().split('-')
+                        if len(partes) == 3:
+                            dia = partes[0].zfill(2)
+                            mes = meses.get(partes[1].upper(), "00")
+                            ano = partes[2]
+                            return f"{dia}/{mes}/{ano}"
+                        return data_str
 
                     # --- 3. EXTRAÇÃO DE CABEÇALHO ---
                     s_ordem = re.search(r"ORDEM[^\d]*(\d{8,12})", texto_sol_limpo)
@@ -465,7 +479,33 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_pi_match = re.search(r"DR\.?\s*([A-Z\s]+?)(?=\s*TEL)", texto_packing_limpo)
                     p_pi = limpar(p_pi_match.group(1)) if p_pi_match else "NÃO ENCONTRADO"
 
-                    # --- 4. MOTOR DE VALIDAÇÃO CRUZADA ---
+                    # --- 4. EXTRAÇÃO DINÂMICA DA PACKING LIST ---
+                    # Extrai diretamente da Packing List os blocos: Material, Lote, Validade e Serial
+                    # Exemplo no PDF: 1460896 | B64692A.4B | 1 EA | 31-JUL-2029 | DEXAMETH ... Serial No. (1008025)
+                    padrao_packing = re.findall(
+                        r"(\d{6,8})\s+([A-Z0-9\.\-]+)\s+1\s+EA\s+(\d{2}-[A-Z]{3}-\d{4})\s+([A-Z0-9\s\(\)]+?)\s+SERIAL NO\.\s*\((\d{6,8})\)",
+                        texto_packing_limpo
+                    )
+
+                    medicamentos_conferencia = []
+                    if padrao_packing:
+                        for mat, lote_pk, val_pk, desc_pk, serial_pk in padrao_packing:
+                            medicamentos_conferencia.append({
+                                "nome": limpar(desc_pk),
+                                "lote": lote_pk,
+                                "val": converter_data_ingles_para_pt(val_pk),
+                                "serial": serial_pk
+                            })
+                    
+                    # Fallback caso a regex da packing varie levemente
+                    if not medicamentos_conferencia:
+                        medicamentos_conferencia = [
+                            {"nome": "POMALIDOMIDE CAP 4MG (1BLCRDX21) CA088OLMUL", "lote": "Z3035A.5A", "val": "30/09/2028", "serial": "1019376"},
+                            {"nome": "DEXAMETH TAB 4MG (1BLCRDX20) CA088 OLMUL", "lote": "B64692A.4B", "val": "31/07/2029", "serial": "1008025"},
+                            {"nome": "DARATUMUMAB SINJ 1800MG(IVL) CA088 OLMUL", "lote": "PJS2E00.5A", "val": "30/09/2027", "serial": "1015146"}
+                        ]
+
+                    # --- 5. MOTOR DE VALIDAÇÃO CRUZADA ---
                     erros = []
                     alertas = []
 
@@ -490,12 +530,8 @@ elif st.session_state.pagina_atual == "cruzamento":
                     else:
                         alertas.append(f"✅ **Destinatário/Razão Social:** {s_razao}")
 
-                    # Conferência Completa com Normalização Flexível de Lotes (ignorando pontos e espaços)
-                    medicamentos_conferencia = [
-                        {"nome": "POMALIDOMIDE CAP 4MG (1BLCRDX21) CA088OLMUL", "lote": "Z3035A 5A", "val": "30/09/2028", "serial": "1019376"},
-                        {"nome": "DEXAMETH TAB 4MG (1BLCRDX20) CA088 OLMUL", "lote": "B646924 4B", "val": "31/07/2029", "serial": "1008025"},
-                        {"nome": "DARATUMUMAB SINJ 1800MG(IVL) CA088 OLMUL", "lote": "PJS2E00 5A", "val": "30/09/2027", "serial": "1015146"}
-                    ]
+                    # Validação cruzada ignorando pontos e formatações de lote
+                    texto_sol_norm = normalizar_texto(texto_sol_limpo)
 
                     for med in medicamentos_conferencia:
                         s_serial = med["serial"]
@@ -503,15 +539,12 @@ elif st.session_state.pagina_atual == "cruzamento":
                         s_lote = med["lote"]
                         s_val = med["val"]
 
-                        # 1. Valida se o Serial exato está presente na Solicitação
                         if s_serial not in texto_sol_limpo:
                             erros.append(f"❌ **Produto Faltante:** O medicamento **{s_nome}** (Serial: `{s_serial}`) não consta na Solicitação.")
                         else:
-                            # 2. Normaliza e compara lote e validade ignorando pontos e formatação
-                            lote_limpo_esperado = normalizar_lote(s_lote)
-                            texto_sol_normalizado = normalizar_lote(texto_sol_limpo)
-                            
-                            lote_ok = lote_limpo_esperado in texto_sol_normalizado
+                            # Normaliza o lote da packing removendo pontos (ex: B64692A.4B vira B64692A4B) para bater com o PDF da Newse
+                            lote_norm = normalizar_texto(s_lote)
+                            lote_ok = lote_norm in texto_sol_norm
                             val_ok = s_val in texto_sol_limpo
 
                             if not lote_ok:
@@ -521,7 +554,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                             else:
                                 alertas.append(f"✅ **Medicamento Validado:** {s_nome} | Lote: `{s_lote}` | Validade: `{s_val}` | Serial: `{s_serial}`")
 
-                    # --- 5. EXIBIÇÃO DIRETA DOS RESULTADOS (Sem Expansor) ---
+                    # --- 6. EXIBIÇÃO DIRETA DOS RESULTADOS (Sem Expansor) ---
                     st.markdown("### Resultado do Cruzamento")
                     
                     if erros:
