@@ -355,7 +355,7 @@ elif st.session_state.pagina_atual == "email":
             exp = c_e.text_input("EXP_DATE:", key=f"exp_{i}")
             qty = c_q.text_input("QUANTITY:", key=f"qty_{i}")
             
-            st.write("") 
+            st.write(" ") 
             df_itens_list.append({"desc": desc, "batch": batch, "exp": exp, "qty": qty})
             
         st.button("➕ Adicionar Novo Item", on_click=add_item)
@@ -408,11 +408,15 @@ elif st.session_state.pagina_atual == "cruzamento":
         </div>
     """, unsafe_allow_html=True)
     
+    # Inicializa a chave de controle para limpar os uploaders automaticamente
+    if "file_uploader_key" not in st.session_state:
+        st.session_state.file_uploader_key = 0
+
     col1, col2 = st.columns(2)
     with col1:
-        arquivo_sol = st.file_uploader("Upload da Solicitação (PDF)", type=["pdf"])
+        arquivo_sol = st.file_uploader("Upload da Solicitação (PDF)", type=["pdf"], key=f"sol_{st.session_state.file_uploader_key}")
     with col2:
-        arquivo_packing = st.file_uploader("Upload da Packing List (PDF)", type=["pdf"])
+        arquivo_packing = st.file_uploader("Upload da Packing List (PDF)", type=["pdf"], key=f"pack_{st.session_state.file_uploader_key}")
 
     if arquivo_sol and arquivo_packing:
         st.divider()
@@ -436,7 +440,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                         return match.group(1) if match else p
 
                     def normalizar_texto(texto):
-                        """Remove pontos, hífens, barras, quebras de linha e espaços para comparação total"""
                         if not texto: return ""
                         return re.sub(r'[\.\s\-\/]', '', str(texto)).upper()
 
@@ -480,8 +483,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_pi = limpar(p_pi_match.group(1)) if p_pi_match else "NÃO ENCONTRADO"
 
                     # --- 4. EXTRAÇÃO DINÂMICA DA PACKING LIST ---
-                    # Extrai diretamente da Packing List os blocos: Material, Lote, Validade e Serial
-                    # Exemplo no PDF: 1460896 | B64692A.4B | 1 EA | 31-JUL-2029 | DEXAMETH ... Serial No. (1008025)
                     padrao_packing = re.findall(
                         r"(\d{6,8})\s+([A-Z0-9\.\-]+)\s+1\s+EA\s+(\d{2}-[A-Z]{3}-\d{4})\s+([A-Z0-9\s\(\)]+?)\s+SERIAL NO\.\s*\((\d{6,8})\)",
                         texto_packing_limpo
@@ -497,7 +498,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                                 "serial": serial_pk
                             })
                     
-                    # Fallback caso a regex da packing varie levemente
                     if not medicamentos_conferencia:
                         medicamentos_conferencia = [
                             {"nome": "POMALIDOMIDE CAP 4MG (1BLCRDX21) CA088OLMUL", "lote": "Z3035A.5A", "val": "30/09/2028", "serial": "1019376"},
@@ -542,7 +542,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                         if s_serial not in texto_sol_limpo:
                             erros.append(f"❌ **Produto Faltante:** O medicamento **{s_nome}** (Serial: `{s_serial}`) não consta na Solicitação.")
                         else:
-                            # Normaliza o lote da packing removendo pontos (ex: B64692A.4B vira B64692A4B) para bater com o PDF da Newse
                             lote_norm = normalizar_texto(s_lote)
                             lote_ok = lote_norm in texto_sol_norm
                             val_ok = s_val in texto_sol_limpo
@@ -554,7 +553,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                             else:
                                 alertas.append(f"✅ **Medicamento Validado:** {s_nome} | Lote: `{s_lote}` | Validade: `{s_val}` | Serial: `{s_serial}`")
 
-                    # --- 6. EXIBIÇÃO DIRETA DOS RESULTADOS (Sem Expansor) ---
+                    # --- 6. EXIBIÇÃO DIRETA DOS RESULTADOS ---
                     st.markdown("### Resultado do Cruzamento")
                     
                     if erros:
@@ -570,6 +569,12 @@ elif st.session_state.pagina_atual == "cruzamento":
                         st.markdown(f"- {a}")
                     
                     st.info("⚠️ **Aviso Operacional:** O sistema não bloqueia divergências de temperatura por regra de negócio. Confirme visualmente nos documentos físicos se as tags de temperatura solicitadas conferem.")
+
+                    # --- 7. RESET AUTOMÁTICO DOS UPLOADERS ---
+                    # Incrementa a chave para forçar a limpeza dos arquivos anexos imediatamente após a execução
+                    st.session_state.file_uploader_key += 1
+                    time.sleep(1.5)
+                    st.rerun()
 
                 except Exception as e:
                     st.error(f"Erro inesperado ao processar os arquivos: {e}")
