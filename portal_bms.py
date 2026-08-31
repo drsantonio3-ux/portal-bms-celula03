@@ -86,6 +86,10 @@ def verificar_senha():
 if not verificar_senha():
     st.stop()
 
+# --- CONTROLE DE SESSÃO PARA ITENS JÁ UTILIZADOS ---
+if "seriais_consumidos" not in st.session_state:
+    st.session_state.seriais_consumidos = set()
+
 # --- CARREGAR DADOS E ESTOQUE ---
 @st.cache_data(ttl=5)
 def carregar_dados_sheets():
@@ -96,7 +100,13 @@ def carregar_dados_sheets():
     
     try: df_est = pd.read_csv(url_estoque)
     except: df_est = None
-    if df_est is not None: df_est['Descricao_Clean'] = df_est['Descricao'].astype(str).str.upper()
+    
+    if df_est is not None: 
+        df_est['Descricao_Clean'] = df_est['Descricao'].astype(str).str.upper()
+        # Identifica a coluna de série dinamicamente para filtrar os já consumidos na sessão
+        col_serie_est = next((c for c in df_est.columns if "SERIE" in c.upper()), None)
+        if col_serie_est and st.session_state.seriais_consumidos:
+            df_est = df_est[~df_est[col_serie_est].astype(str).str.strip().isin(st.session_state.seriais_consumidos)]
 
     try:
         df_tes = pd.read_csv(url_tes)
@@ -318,7 +328,7 @@ if st.session_state.pagina_atual == "automacao":
             with col_del: delivery_number = st.text_input("DEL# (Delivery Number) para registro:")
             with col_btn: 
                 st.write("")
-                if st.button("💾 Executar Baixa noEstoque", use_container_width=True):
+                if st.button("💾 Executar Baixa no Estoque", use_container_width=True):
                     if not delivery_number: 
                         st.error("❌ Preencha o DEL#.")
                     else: 
@@ -326,6 +336,9 @@ if st.session_state.pagina_atual == "automacao":
                         sucesso_envio = True
                         
                         for p in ids_utilizados:
+                            # Adiciona imediatamente na lista de consumo local para sumir do sistema
+                            st.session_state.seriais_consumidos.add(str(p["serie"]).strip())
+                            
                             payload = {
                                 "data_uso": datetime.today().strftime('%d/%m/%Y'),
                                 "delivery_number": delivery_number,
@@ -349,7 +362,9 @@ if st.session_state.pagina_atual == "automacao":
                                 st.error(f"Erro ao atualizar planilha para o item {p['id_est']}: {ex}")
                         
                         if sucesso_envio:
-                            st.success(f"✅ Baixa executada com sucesso! Linhas movidas para 'Loggers Já Utilizados' e gravadas na 'Auditoria' no Google Sheets.")
+                            # Limpa o cache para forçar a leitura nova da planilha na próxima consulta
+                            st.cache_data.clear()
+                            st.success(f"✅ Baixa executada com sucesso! Linhas removidas do estoque ativo e movidas para 'Loggers Já Utilizados'.")
                             time.sleep(2)
                             st.rerun() 
         
