@@ -7,6 +7,7 @@ import re
 import urllib.request
 import json
 import time
+import random
 
 # --- CONFIGURAÇÕES DA PÁGINA (SaaS Logístico - Wide) ---
 st.set_page_config(page_title="DRS Group | BMS Operations", layout="wide", page_icon="🏢")
@@ -92,16 +93,22 @@ if "seriais_consumidos" not in st.session_state:
 if "ids_consumidos" not in st.session_state:
     st.session_state.ids_consumidos = set()
 
-# --- CARREGAR DADOS E ESTOQUE ---
-@st.cache_data(ttl=5)
-def carregar_dados_sheets():
+# --- CARREGAR DADOS E ESTOQUE COM VALIDAÇÃO HISTÓRICA E ANTI-CACHE ---
+@st.cache_data(ttl=2)
+def carregar_dados_sheets(random_seed):
     id_estoque = "10f18RZ-48HiJS2HckG6Siw2WRE9zz92_Pj6chkTwXik"
     id_loggers = "1ztZC3s0kKINJLNOR-BEYUUFjycxSVT7NMGVNWdxWh98"
-    url_estoque = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv"
-    url_tes = f"https://docs.google.com/spreadsheets/d/{id_loggers}/export?format=csv&gid=536812026"
+    
+    # Adiciona parâmetro aleatório para burlar o cache do Google Sheets
+    url_estoque = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv&cb={random_seed}"
+    url_usados = f"https://docs.google.com/spreadsheets/d/{id_estoque}/gviz/tq?tqx=out:csv&sheet=Loggers+J%C3%A1+Utilizados&cb={random_seed}"
+    url_tes = f"https://docs.google.com/spreadsheets/d/{id_loggers}/export?format=csv&gid=536812026&cb={random_seed}"
     
     try: df_est = pd.read_csv(url_estoque)
     except: df_est = None
+    
+    try: df_usados = pd.read_csv(url_usados)
+    except: df_usados = None
     
     if df_est is not None: 
         df_est['Descricao_Clean'] = df_est['Descricao'].astype(str).str.upper()
@@ -109,10 +116,25 @@ def carregar_dados_sheets():
         col_serie_est = next((c for c in df_est.columns if "SERIE" in c.upper() or "SÉRIE" in c.upper()), None)
         col_id_est = next((c for c in df_est.columns if "IDENTIFICACAO" in c.upper() or "ID" in c.upper()), None)
         
-        if col_serie_est and st.session_state.seriais_consumidos:
-            df_est = df_est[~df_est[col_serie_est].astype(str).str.strip().isin(st.session_state.seriais_consumidos)]
-        if col_id_est and st.session_state.ids_consumidos:
-            df_est = df_est[~df_est[col_id_est].astype(str).str.strip().isin(st.session_state.ids_consumidos)]
+        seriais_para_excluir = {s for s in st.session_state.seriais_consumidos if s and str(s).upper() not in ["N/A", "NAN", "NONE", ""]}
+        ids_para_excluir = {i for i in st.session_state.ids_consumidos if i and str(i).upper() not in ["N/A", "NAN", "NONE", ""]}
+        
+        # Pega todos os loggers já utilizados direto da aba do Google Sheets
+        if df_usados is not None and not df_usados.empty:
+            for col in df_usados.columns:
+                col_upper = col.upper()
+                if "SERIE" in col_upper or "SÉRIE" in col_upper:
+                    vals = df_usados[col].dropna().astype(str).str.strip()
+                    seriais_para_excluir.update([v for v in vals if v and v.upper() not in ["N/A", "NAN", "NONE", ""]])
+                if "IDENTIFICACAO" in col_upper or "ID" in col_upper or "ESTOQUE" in col_upper:
+                    vals = df_usados[col].dropna().astype(str).str.strip()
+                    ids_para_excluir.update([v for v in vals if v and v.upper() not in ["N/A", "NAN", "NONE", ""]])
+        
+        # Filtra o estoque removendo com segurança apenas os itens consumidos
+        if col_serie_est and seriais_para_excluir:
+            df_est = df_est[~df_est[col_serie_est].astype(str).str.strip().isin(seriais_para_excluir)]
+        if col_id_est and ids_para_excluir:
+            df_est = df_est[~df_est[col_id_est].astype(str).str.strip().isin(ids_para_excluir)]
 
     try:
         df_tes = pd.read_csv(url_tes)
@@ -123,7 +145,11 @@ def carregar_dados_sheets():
         
     return df_est, df_tes
 
-df_estoque, df_te = carregar_dados_sheets()
+# Gera uma semente aleatória para forçar atualização sem cache travado
+if "cache_seed" not in st.session_state:
+    st.session_state.cache_seed = random.randint(1, 100000)
+
+df_estoque, df_te = carregar_dados_sheets(st.session_state.cache_seed)
 
 # --- LÓGICA DE NAVEGAÇÃO DE PÁGINAS ---
 if "pagina_atual" not in st.session_state:
@@ -318,7 +344,7 @@ if st.session_state.pagina_atual == "automacao":
                     ids_utilizados.append({
                         "label": label,
                         "palete": str(item.get('Palete', 'N/A')).strip(),
-                        "id_est": str(item.get('Identificacao Estoque', 'N/A')).strip(),
+                        "id_est": str(item.get('Identificacao Estoque', item.get('Identificacao Estoque', 'N/A'))).strip(),
                         "serie": serie
                     })
                     st.info(f"**{label}** alocado ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')} | Série: {serie}")
@@ -369,6 +395,7 @@ if st.session_state.pagina_atual == "automacao":
                             urllib.request.urlopen(req, timeout=25)
                             
                             st.cache_data.clear()
+                            st.session_state.cache_seed = random.randint(1, 100000)
                             st.success(f"✅ Baixa executada com sucesso! Itens removidos do estoque ativo.")
                             time.sleep(2)
                             st.rerun() 
@@ -391,7 +418,7 @@ if st.session_state.pagina_atual == "automacao":
         with c_esq: btn_copia("DEPOSITANTE", val_depositante, "d"); btn_copia("PALETE", val_palete, "p")
         with c_dir: btn_copia("ID ITEM", val_id, "i"); btn_copia("TE DO ESTUDO", val_te, "t")
 
-        # --- PARTICULARIDADES COM ACUMULO CORRETO DE TEMPTALE E TAG ALERT ---
+        # --- PARTICULARIDADES COM ACUMULO CORRETO DE TEMP TALE E TAG ALERT ---
         paragrafos = ["Verificar se no processo consta Packing List e atentar se a quantidade, lote e validade está de acordo com as informações retiradas do sistema LOGIX."]
         
         if tem_temptale: 
