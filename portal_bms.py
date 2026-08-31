@@ -235,6 +235,13 @@ if st.session_state.pagina_atual == "automacao":
             # Isola a instrução de armazenamento e logger até o término da validação daquela linha
             instrucao = bloco_atual.split('Y/N')[0] if 'Y/N' in bloco_atual else bloco_atual[:200]
             
+            # NOVO: Extrai a faixa térmica exata para evitar agrupar 25C com 30C na mesma caixa
+            temp_range = "PADRAO"
+            match_temp = re.search(r'TEMP\s*(?:NOT\s*EXCEED\s*)?\d+(?:\s*-\s*\d+)?C?', instrucao)
+            if match_temp:
+                # Normaliza a string (ex: "TEMP NOT EXCEED 25C" vira "TEMPNOTEXCEED25C")
+                temp_range = re.sub(r'\s+', '', match_temp.group(0))
+            
             # Análise estrita de temperatura (Limites diferentes de 2-8 tornam-se Ambiente)
             is_ref = "2-8" in instrucao or "REFRIGER" in instrucao
             
@@ -249,7 +256,7 @@ if st.session_state.pagina_atual == "automacao":
             is_cyto = any(cyto in contexto_busca for cyto in cytotoxic_list)
             
             if logger_type:
-                loggers_to_allocate.append({"tipo": logger_type, "is_cyto": is_cyto})
+                loggers_to_allocate.append({"tipo": logger_type, "is_cyto": is_cyto, "temp_range": temp_range})
 
         # Consolidação Final (Geração da Array de Separação de Caixas)
         consolidation = []
@@ -259,9 +266,11 @@ if st.session_state.pagina_atual == "automacao":
             if item["is_cyto"]:
                 consolidation.append(item["tipo"]) # Força isolamento de caixa
             else:
-                if item["tipo"] not in non_cyto_added:
-                    consolidation.append(item["tipo"]) # Dedup caixas padrão
-                    non_cyto_added.add(item["tipo"])
+                # A chave agora impede que medicações com limites térmicos diferentes sejam unificadas
+                chave_dedup = f"{item['tipo']}_{item['temp_range']}"
+                if chave_dedup not in non_cyto_added:
+                    consolidation.append(item["tipo"]) # Cria nova caixa/logger
+                    non_cyto_added.add(chave_dedup)
 
         # Fallback de segurança contra anomalias estruturais no PDF
         if not consolidation:
