@@ -106,11 +106,9 @@ def carregar_dados_sheets():
     if df_est is not None: 
         df_est['Descricao_Clean'] = df_est['Descricao'].astype(str).str.upper()
         
-        # Identifica colunas de série e ID dinamicamente
         col_serie_est = next((c for c in df_est.columns if "SERIE" in c.upper() or "SÉRIE" in c.upper()), None)
         col_id_est = next((c for c in df_est.columns if "IDENTIFICACAO" in c.upper() or "ID" in c.upper()), None)
         
-        # Aplica filtro robusto eliminando itens já consumidos nesta sessão
         if col_serie_est and st.session_state.seriais_consumidos:
             df_est = df_est[~df_est[col_serie_est].astype(str).str.strip().isin(st.session_state.seriais_consumidos)]
         if col_id_est and st.session_state.ids_consumidos:
@@ -278,7 +276,7 @@ if st.session_state.pagina_atual == "automacao":
         if not consolidation:
             if "TEMPTALE" in texto_upper or "TT4" in texto_upper: consolidation.append("TempTale Ambiente")
             if "TAGALERT" in texto_upper and ("2-8" in texto_upper or "REFRIGER" in texto_upper or "36-46F" in texto_upper): consolidation.append("Tag Alert Refrigerado")
-            if "TAGALERT" in texto_upper and ("20-25" in texto_upper or "15-25" in texto_upper): consolidation.append("Tag Alert Ambiente")
+            if "TAGALERT" in texto_upper and ("20-25" in texto_upper or "15-25" in texto_upper or "2-30C" in texto_upper): consolidation.append("Tag Alert Ambiente")
 
         tem_temptale = "TempTale Ambiente" in consolidation
         tem_tagalert_ref = "Tag Alert Refrigerado" in consolidation
@@ -320,7 +318,7 @@ if st.session_state.pagina_atual == "automacao":
                     ids_utilizados.append({
                         "label": label,
                         "palete": str(item.get('Palete', 'N/A')).strip(),
-                        "id_est": str(item.get('Identificacao Estoque', item.get('Identificacao Estoque', 'N/A'))).strip(),
+                        "id_est": str(item.get('Identificacao Estoque', 'N/A')).strip(),
                         "serie": serie
                     })
                     st.info(f"**{label}** alocado ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')} | Série: {serie}")
@@ -342,7 +340,6 @@ if st.session_state.pagina_atual == "automacao":
                     else: 
                         webhook_url = "https://script.google.com/macros/s/AKfycbzpwZC2LW7PQ1JGMkJIZD3Rxd4nv4pfEZ1QS1D9jDxQbt4Qf2hiCmv9dJ8pAJnBHJglug/exec"
                         
-                        # Adiciona imediatamente na sessão para sumir do painel
                         for p in ids_utilizados:
                             st.session_state.seriais_consumidos.add(str(p["serie"]).strip())
                             st.session_state.ids_consumidos.add(str(p["id_est"]).strip())
@@ -394,10 +391,27 @@ if st.session_state.pagina_atual == "automacao":
         with c_esq: btn_copia("DEPOSITANTE", val_depositante, "d"); btn_copia("PALETE", val_palete, "p")
         with c_dir: btn_copia("ID ITEM", val_id, "i"); btn_copia("TE DO ESTUDO", val_te, "t")
 
+        # --- CORREÇÃO APLICADA AQUI: Condições independentes para acumular TempTale e Tag Alert ---
         paragrafos = ["Verificar se no processo consta Packing List e atentar se a quantidade, lote e validade está de acordo com as informações retiradas do sistema LOGIX."]
-        if tem_temptale: paragrafos.extend(["Houve envio de medicação AMBIENTE.", "As medicações foram acondicionadas em embalagem apropriada CREDO validada pelo cliente com TempTale ULTRA USB ambiente."])
-        elif is_ambiente: paragrafos.extend(["Houve envio de medicação AMBIENTE.", "As medicações foram acondicionadas em embalagem CREDO com Tag Alert ambiente."])
-        if tem_tagalert_ref: paragrafos.extend(["Houve envio de medicação REFRIGERADA.", "As medicações foram acondicionadas em caixa CREDO SÉRIE 04 com Tag Alert refrigerado."])
+        
+        if tem_temptale: 
+            paragrafos.extend([
+                "Houve envio de medicação AMBIENTE.", 
+                "As medicações foram acondicionadas em embalagem apropriada CREDO validada pelo cliente com TempTale ULTRA USB ambiente."
+            ])
+            
+        if tem_tagalert_amb: 
+            paragrafos.extend([
+                "Houve envio de medicação AMBIENTE.", 
+                "As medicações foram acondicionadas em embalagem CREDO com Tag Alert ambiente."
+            ])
+            
+        if tem_tagalert_ref: 
+            paragrafos.extend([
+                "Houve envio de medicação REFRIGERADA.", 
+                "As medicações foram acondicionadas em caixa CREDO SÉRIE 04 com Tag Alert refrigerado."
+            ])
+            
         paragrafos.append("Time DOC: Não aplicar o desconto padrão de 1 hora na SC de Envio caso o centro já tenha reduzido o período.")
         texto_final = "\\n\\n".join(paragrafos)
         
