@@ -408,9 +408,15 @@ elif st.session_state.pagina_atual == "cruzamento":
         </div>
     """, unsafe_allow_html=True)
     
-    # Inicializa a chave de controle para limpar os uploaders automaticamente
+    # Inicializa a chave de controle para permitir a limpeza manual via botão
     if "file_uploader_key" not in st.session_state:
         st.session_state.file_uploader_key = 0
+
+    col_btn_limpar, col_vazio = st.columns([1, 4])
+    with col_btn_limpar:
+        if st.button("🗑️ Limpar Arquivos", use_container_width=True):
+            st.session_state.file_uploader_key += 1
+            st.rerun()
 
     col1, col2 = st.columns(2)
     with col1:
@@ -569,12 +575,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                         st.markdown(f"- {a}")
                     
                     st.info("⚠️ **Aviso Operacional:** O sistema não bloqueia divergências de temperatura por regra de negócio. Confirme visualmente nos documentos físicos se as tags de temperatura solicitadas conferem.")
-
-                    # --- 7. RESET AUTOMÁTICO DOS UPLOADERS ---
-                    # Incrementa a chave para forçar a limpeza dos arquivos anexos imediatamente após a execução
-                    st.session_state.file_uploader_key += 1
-                    time.sleep(1.5)
-                    st.rerun()
 
                 except Exception as e:
                     st.error(f"Erro inesperado ao processar os arquivos: {e}")
