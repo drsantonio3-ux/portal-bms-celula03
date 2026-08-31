@@ -498,10 +498,12 @@ elif st.session_state.pagina_atual == "cruzamento":
                     seriais_sol = re.findall(r"\b(\d{6,8})\b", texto_sol_upper)
                     s_qty = str(len(seriais_sol)) if len(seriais_sol) > 0 else "NÃO CONSTA"
 
-                    # Extração rigorosa de lotes na Solicitação (Filtrando lixo de cabeçalho)
-                    palavras_proibidas = ["DADOS", "ENVIO", "BRISTOL", "MYERS", "SQUIBB", "QUANTITY", "VALIDADE", "LOTE", "MATERIAL", "BATCH", "CLIMATIZADA", "CAMARA", "AREA", "PORTAL", "ENDERECO"]
-                    s_lotes_brutos = re.findall(r"\b([A-Z0-9]{5,10}(?:\.[A-Z0-9]+)?)\b", texto_sol_upper)
-                    s_lotes_sol = [l for l in s_lotes_brutos if l not in palavras_proibidas and not l.isdigit()]
+                    # Extração rigorosa de lotes (Exige que contenha letras E números para evitar texto comum)
+                    padrao_lote = re.compile(r'\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9\.]+\b')
+                    palavras_proibidas = {"QUANTITY", "VALIDADE", "LOTE", "MATERIAL", "BATCH", "CLIMATIZADA", "CAMARA", "AREA", "PORTAL", "ENDERECO", "CENTRO", "SOCIAL", "TELEFONE", "PACKING", "VERBO", "DIVINO", "RUA", "CHAC", "ANTONIO", "SAO", "PAULO", "BRASIL"}
+                    
+                    s_lotes_brutos = padrao_lote.findall(texto_sol_upper)
+                    s_lotes_sol = [l for l in s_lotes_brutos if l not in palavras_proibidas and len(l) >= 4]
 
 
                     # --- EXTRAÇÃO DOCUMENTO VALIDADO (PACKING LIST) ---
@@ -536,9 +538,9 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_qty_matches = re.findall(r"(\d+)\s*EA", texto_packing_upper)
                     p_qty = str(sum([int(q) for q in p_qty_matches])) if p_qty_matches else "NÃO CONSTA"
 
-                    # Extração rigorosa de lotes na Packing List (Filtrando lixo de cabeçalho)
-                    p_lotes_brutos = re.findall(r"\b([A-Z0-9]{5,10}(?:\.[A-Z0-9]+)?)\b", texto_packing_upper)
-                    p_lotes_packing = [l for l in p_lotes_brutos if l not in palavras_proibidas and not l.isdigit()]
+                    # Extração rigorosa de lotes na Packing List
+                    p_lotes_brutos = padrao_lote.findall(texto_packing_upper)
+                    p_lotes_packing = [l for l in p_lotes_brutos if l not in palavras_proibidas and len(l) >= 4]
 
                     # Coleta de Seriais
                     seriais_packing = []
@@ -559,8 +561,13 @@ elif st.session_state.pagina_atual == "cruzamento":
                     seriais_faltantes = [s for s in seriais_packing if s not in texto_sol_upper]
                     seriais_status_ok = len(seriais_faltantes) == 0 and len(seriais_packing) > 0
 
-                    # Validação de Lotes cruzados
-                    lotes_conferem = all(any(lote_p in lote_s for lote_s in s_lotes_sol) for lote_p in p_lotes_packing[:3]) if len(p_lotes_packing) > 0 else False
+                    # Validação cruzada de lotes (desconsiderando pontos)
+                    lotes_conferem = False
+                    if len(p_lotes_packing) > 0 and len(s_lotes_sol) > 0:
+                        lotes_conferem = all(
+                            any(lote_p.replace(".", "") in lote_s.replace(".", "") for lote_s in s_lotes_sol)
+                            for lote_p in p_lotes_packing
+                        )
 
 
                     # --- COMPARAÇÃO ESTRITA ---
