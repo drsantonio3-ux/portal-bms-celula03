@@ -332,38 +332,43 @@ if st.session_state.pagina_atual == "automacao":
                         st.error("❌ Preencha o DEL#.")
                     else: 
                         webhook_url = "https://script.google.com/macros/s/AKfycbzpwZC2LW7PQ1JGMkJIZD3Rxd4nv4pfEZ1QS1D9jDxQbt4Qf2hiCmv9dJ8pAJnBHJglug/exec"
-                        sucesso_envio = True
                         
+                        # Adiciona todos os seriais na sessão para bloqueio instantâneo
                         for p in ids_utilizados:
                             st.session_state.seriais_consumidos.add(str(p["serie"]).strip())
-                            
-                            payload = {
-                                "data_uso": datetime.today().strftime('%d/%m/%Y'),
-                                "delivery_number": delivery_number,
-                                "estudo": estudo_encontrado,
-                                "te": te_resultado,
-                                "tipo_equipamento": p["label"],
-                                "palete": p["palete"],
-                                "id_estoque": p["id_est"],
-                                "cidade_destino": cidade_destino,
-                                "numero_serie": p["serie"]
-                            }
-                            try:
-                                req = urllib.request.Request(
-                                    webhook_url,
-                                    data=json.dumps(payload).encode('utf-8'),
-                                    headers={'Content-Type': 'application/json'}
-                                )
-                                urllib.request.urlopen(req, timeout=5)
-                            except Exception as ex:
-                                sucesso_envio = False
-                                st.error(f"Erro ao atualizar planilha para o item {p['id_est']}: {ex}")
                         
-                        if sucesso_envio:
+                        # Monta o pacote em lote (única requisição HTTP)
+                        payload = {
+                            "data_uso": datetime.today().strftime('%d/%m/%Y'),
+                            "delivery_number": delivery_number,
+                            "estudo": estudo_encontrado,
+                            "te": te_resultado,
+                            "cidade_destino": cidade_destino,
+                            "itens": [
+                                {
+                                    "tipo": p["label"],
+                                    "palete": p["palete"],
+                                    "id_est": p["id_est"],
+                                    "serie": p["serie"]
+                                } for p in ids_utilizados
+                            ]
+                        }
+                        
+                        try:
+                            req = urllib.request.Request(
+                                webhook_url,
+                                data=json.dumps(payload).encode('utf-8'),
+                                headers={'Content-Type': 'application/json'}
+                            )
+                            # Timeout estendido para 25 segundos para evitar falhas de rede
+                            urllib.request.urlopen(req, timeout=25)
+                            
                             st.cache_data.clear()
-                            st.success(f"✅ Baixa executada com sucesso! Linhas removidas do estoque ativo e movidas para 'Loggers Já Utilizados'.")
+                            st.success(f"✅ Baixa executada com sucesso! Linhas removidas do estoque ativo e gravadas no Sheets.")
                             time.sleep(2)
                             st.rerun() 
+                        except Exception as ex:
+                            st.error(f"Erro ao atualizar planilha: {ex}")
         
         st.markdown("### 📋 Dados para Restrição e Particularidades")
         val_depositante = "056998982001260"
@@ -654,7 +659,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                     for a in alertas:
                         st.markdown(f"- {a}")
                     
-                    st.info("⚠️ **Aviso Operacional:** O sistema não bloqueia divergências de temperatura por regra de negócio. Confirme visualmente nos documentos físicos se as tags de temperatura solicitadas conferem.")
+                    st.info("⚠️ **Aviso Operacional:** O sistema não bloqueiza divergências de temperatura por regra de negócio. Confirme visualmente nos documentos físicos se as tags de temperatura solicitadas conferem.")
 
                 except Exception as e:
                     st.error(f"Erro inesperado ao processar os arquivos: {e}")
