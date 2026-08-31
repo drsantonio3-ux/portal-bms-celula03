@@ -7,7 +7,6 @@ import re
 import urllib.request
 import json
 import time
-import random
 
 # --- CONFIGURAÇÕES DA PÁGINA (SaaS Logístico - Wide) ---
 st.set_page_config(page_title="DRS Group | BMS Operations", layout="wide", page_icon="🏢")
@@ -93,21 +92,19 @@ if "seriais_consumidos" not in st.session_state:
 if "ids_consumidos" not in st.session_state:
     st.session_state.ids_consumidos = set()
 
-# --- CARREGAR DADOS E ESTOQUE COM VALIDAÇÃO HISTÓRICA ROBUSTA ---
-@st.cache_data(ttl=2)
-def carregar_dados_sheets(random_seed):
+# --- CARREGAR DADOS E ESTOQUE ---
+@st.cache_data(ttl=1)
+def carregar_dados_sheets():
     id_estoque = "10f18RZ-48HiJS2HckG6Siw2WRE9zz92_Pj6chkTwXik"
     id_loggers = "1ztZC3s0kKINJLNOR-BEYUUFjycxSVT7NMGVNWdxWh98"
     
-    url_estoque = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv&cb={random_seed}"
-    url_usados = f"https://docs.google.com/spreadsheets/d/{id_estoque}/gviz/tq?tqx=out:csv&sheet=Loggers+J%C3%A1+Utilizados&cb={random_seed}"
-    url_tes = f"https://docs.google.com/spreadsheets/d/{id_loggers}/export?format=csv&gid=536812026&cb={random_seed}"
+    # TIMESTAMP GERADO PARA QUEBRAR O CACHE DO GOOGLE EM CASO DE F5
+    cb = int(time.time())
+    url_estoque = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv&cb={cb}"
+    url_tes = f"https://docs.google.com/spreadsheets/d/{id_loggers}/export?format=csv&gid=536812026&cb={cb}"
     
     try: df_est = pd.read_csv(url_estoque)
     except: df_est = None
-    
-    try: df_usados = pd.read_csv(url_usados, header=None)
-    except: df_usados = None
     
     if df_est is not None: 
         df_est['Descricao_Clean'] = df_est['Descricao'].astype(str).str.upper()
@@ -115,26 +112,10 @@ def carregar_dados_sheets(random_seed):
         col_serie_est = next((c for c in df_est.columns if "SERIE" in c.upper() or "SÉRIE" in c.upper()), None)
         col_id_est = next((c for c in df_est.columns if "IDENTIFICACAO" in c.upper() or "ID" in c.upper()), None)
         
-        used_tokens = set()
-        for s in st.session_state.seriais_consumidos:
-            if s and str(s).upper() not in ["N/A", "NAN", "NONE", ""]:
-                used_tokens.add(str(s).strip())
-        for i in st.session_state.ids_consumidos:
-            if i and str(i).upper() not in ["N/A", "NAN", "NONE", ""]:
-                used_tokens.add(str(i).strip())
-        
-        # Coleta universal de todos os valores na aba de utilizados para evitar falhas de cabeçalho
-        if df_usados is not None and not df_usados.empty:
-            for col in df_usados.columns:
-                vals = df_usados[col].dropna().astype(str).str.strip().tolist()
-                for v in vals:
-                    if v and v.upper() not in ["N/A", "NAN", "NONE", "UNNAMED", "SERIE", "SÉRIE", "IDENTIFICACAO", "PALETE"]:
-                        used_tokens.add(v)
-        
-        if col_serie_est and used_tokens:
-            df_est = df_est[~df_est[col_serie_est].astype(str).str.strip().isin(used_tokens)]
-        if col_id_est and used_tokens:
-            df_est = df_est[~df_est[col_id_est].astype(str).str.strip().isin(used_tokens)]
+        if col_serie_est and st.session_state.seriais_consumidos:
+            df_est = df_est[~df_est[col_serie_est].astype(str).str.strip().isin(st.session_state.seriais_consumidos)]
+        if col_id_est and st.session_state.ids_consumidos:
+            df_est = df_est[~df_est[col_id_est].astype(str).str.strip().isin(st.session_state.ids_consumidos)]
 
     try:
         df_tes = pd.read_csv(url_tes)
@@ -145,10 +126,7 @@ def carregar_dados_sheets(random_seed):
         
     return df_est, df_tes
 
-if "cache_seed" not in st.session_state:
-    st.session_state.cache_seed = random.randint(1, 100000)
-
-df_estoque, df_te = carregar_dados_sheets(st.session_state.cache_seed)
+df_estoque, df_te = carregar_dados_sheets()
 
 # --- LÓGICA DE NAVEGAÇÃO DE PÁGINAS ---
 if "pagina_atual" not in st.session_state:
@@ -394,7 +372,6 @@ if st.session_state.pagina_atual == "automacao":
                             urllib.request.urlopen(req, timeout=25)
                             
                             st.cache_data.clear()
-                            st.session_state.cache_seed = random.randint(1, 100000)
                             st.success(f"✅ Baixa executada com sucesso! Itens removidos do estoque ativo.")
                             time.sleep(2)
                             st.rerun() 
@@ -417,7 +394,7 @@ if st.session_state.pagina_atual == "automacao":
         with c_esq: btn_copia("DEPOSITANTE", val_depositante, "d"); btn_copia("PALETE", val_palete, "p")
         with c_dir: btn_copia("ID ITEM", val_id, "i"); btn_copia("TE DO ESTUDO", val_te, "t")
 
-        # --- PARTICULARIDADES COM ACUMULO INDEPENDENTE DE TEMP TALE E TAG ALERT ---
+        # --- PARTICULARIDADES COM ACUMULO CORRETO DE TEMPTALE E TAG ALERT ---
         paragrafos = ["Verificar se no processo consta Packing List e atentar se a quantidade, lote e validade está de acordo com as informações retiradas do sistema LOGIX."]
         
         if tem_temptale: 
