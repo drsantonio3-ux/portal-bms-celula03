@@ -318,11 +318,11 @@ if st.session_state.pagina_atual == "automacao":
             with col_del: delivery_number = st.text_input("DEL# (Delivery Number) para registro:")
             with col_btn: 
                 st.write("")
-                if st.button("💾 Executar Baixa no Estoque", use_container_width=True):
+                if st.button("💾 Executar Baixa noEstoque", use_container_width=True):
                     if not delivery_number: 
                         st.error("❌ Preencha o DEL#.")
                     else: 
-                        webhook_url = st.secrets.get("WEBHOOK_APPS_SCRIPT", "https://script.google.com/macros/s/SEU_ID_DE_DEPLOY_AQUI/exec")
+                        webhook_url = "https://script.google.com/macros/s/AKfycbzpwZC2LW7PQ1JGMkJIZD3Rxd4nv4pfEZ1QS1D9jDxQbt4Qf2hiCmv9dJ8pAJnBHJglug/exec"
                         sucesso_envio = True
                         
                         for p in ids_utilizados:
