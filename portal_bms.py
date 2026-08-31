@@ -109,18 +109,6 @@ def carregar_dados_sheets():
 
 df_estoque, df_te = carregar_dados_sheets()
 
-# --- LÓGICA DE CONTAGEM DE ESTOQUE (COM REDUÇÃO AO VIVO) ---
-if "consumo_local" not in st.session_state:
-    st.session_state.consumo_local = {"tt": 0, "ta_amb": 0, "ta_ref": 0}
-
-raw_tt = len(df_estoque[df_estoque['Descricao_Clean'].str.contains("TEMPTALE", na=False)]) if df_estoque is not None else 0
-raw_ta_amb = len(df_estoque[df_estoque['Descricao_Clean'].str.contains("TAGALERT 15-25", na=False)]) if df_estoque is not None else 0
-raw_ta_ref = len(df_estoque[df_estoque['Descricao_Clean'].str.contains("TAGALERT 2-8", na=False)]) if df_estoque is not None else 0
-
-tt_disp = max(0, raw_tt - st.session_state.consumo_local["tt"])
-ta_amb_disp = max(0, raw_ta_amb - st.session_state.consumo_local["ta_amb"])
-ta_ref_disp = max(0, raw_ta_ref - st.session_state.consumo_local["ta_ref"])
-
 # --- LÓGICA DE NAVEGAÇÃO DE PÁGINAS ---
 if "pagina_atual" not in st.session_state:
     st.session_state.pagina_atual = "automacao"
@@ -155,12 +143,17 @@ with st.sidebar:
 
     st.write("") 
 
+    # Métricas da barra lateral baseadas no estoque atual do Sheets
+    raw_tt = len(df_estoque[df_estoque['Descricao_Clean'].str.contains("TEMPTALE", na=False)]) if df_estoque is not None else 0
+    raw_ta_amb = len(df_estoque[df_estoque['Descricao_Clean'].str.contains("TAGALERT 15-25", na=False)]) if df_estoque is not None else 0
+    raw_ta_ref = len(df_estoque[df_estoque['Descricao_Clean'].str.contains("TAGALERT 2-8", na=False)]) if df_estoque is not None else 0
+
     st.markdown(f"""
         <div style="font-size: 11px; color: #4a5568; margin-top: 5px; margin-bottom: 5px; line-height: 1.4; background-color: #f4f7f6; padding: 8px; border-radius: 4px; border-left: 3px solid #e59235;">
             <b style="font-size: 10px; color: #1b3834;">LOGGERS DISPONÍVEIS:</b><br>
-            Tag Alert Ambiente: <b style="color: #209b7c; font-size: 12px; float: right;">{ta_amb_disp}</b><br>
-            Tag Alert Refrigerado: <b style="color: #209b7c; font-size: 12px; float: right;">{ta_ref_disp}</b><br>
-            TempTale Ambiente: <b style="color: #209b7c; font-size: 12px; float: right;">{tt_disp}</b>
+            Tag Alert Ambiente: <b style="color: #209b7c; font-size: 12px; float: right;">{raw_ta_amb}</b><br>
+            Tag Alert Refrigerado: <b style="color: #209b7c; font-size: 12px; float: right;">{raw_ta_ref}</b><br>
+            TempTale Ambiente: <b style="color: #209b7c; font-size: 12px; float: right;">{raw_tt}</b>
         </div>
     """, unsafe_allow_html=True)
 
@@ -182,7 +175,7 @@ if st.session_state.pagina_atual == "automacao":
         <div style="background-color: #1b3834; padding: 18px 25px; border-radius: 6px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
             <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">📦 Automação de Packing List (SLA e Estoque)</h2>
             <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
-                Faça o upload do <b>Packing List (PDF)</b> para extração imediata de dados. O sistema realiza a sugestão automática de <b>ativos logísticos</b>,<br> cálculo exato do <b>SLA de entrega</b> (considerando dias úteis) e a <b>baixa de estoque ao vivo</b>.
+                Faça o upload do <b>Packing List (PDF)</b> para extração imediata de dados. O sistema realiza a sugestão automática de <b>ativos logísticos</b>,<br> cálculo exato do <b>SLA de entrega</b> (considerando dias úteis) e a <b>baixa de estoque ao vivo na planilha</b>.
             </p>
         </div>
     """, unsafe_allow_html=True)
@@ -232,17 +225,13 @@ if st.session_state.pagina_atual == "automacao":
             bloco_atual = blocos_storage[i]
             bloco_anterior = blocos_storage[i-1]
             
-            # Isola a instrução de armazenamento e logger até o término da validação daquela linha
             instrucao = bloco_atual.split('Y/N')[0] if 'Y/N' in bloco_atual else bloco_atual[:200]
             
-            # NOVO: Extrai a faixa térmica exata para evitar agrupar 25C com 30C na mesma caixa
             temp_range = "PADRAO"
             match_temp = re.search(r'TEMP\s*(?:NOT\s*EXCEED\s*)?\d+(?:\s*-\s*\d+)?C?', instrucao)
             if match_temp:
-                # Normaliza a string (ex: "TEMP NOT EXCEED 25C" vira "TEMPNOTEXCEED25C")
                 temp_range = re.sub(r'\s+', '', match_temp.group(0))
             
-            # Análise estrita de temperatura (Limites diferentes de 2-8 tornam-se Ambiente)
             is_ref = "2-8" in instrucao or "REFRIGER" in instrucao
             
             logger_type = None
@@ -251,34 +240,29 @@ if st.session_state.pagina_atual == "automacao":
             elif "TAGALERT" in instrucao:
                 logger_type = "Tag Alert Refrigerado" if is_ref else "Tag Alert Ambiente"
             
-            # Varredura Exclusiva por Nomenclatura (Ignorando a palavra CYTOTOXIC)
             contexto_busca = (bloco_anterior[-200:] + instrucao)
             is_cyto = any(cyto in contexto_busca for cyto in cytotoxic_list)
             
             if logger_type:
                 loggers_to_allocate.append({"tipo": logger_type, "is_cyto": is_cyto, "temp_range": temp_range})
 
-        # Consolidação Final (Geração da Array de Separação de Caixas)
         consolidation = []
         non_cyto_added = set()
 
         for item in loggers_to_allocate:
             if item["is_cyto"]:
-                consolidation.append(item["tipo"]) # Força isolamento de caixa
+                consolidation.append(item["tipo"])
             else:
-                # A chave agora impede que medicações com limites térmicos diferentes sejam unificadas
                 chave_dedup = f"{item['tipo']}_{item['temp_range']}"
                 if chave_dedup not in non_cyto_added:
-                    consolidation.append(item["tipo"]) # Cria nova caixa/logger
+                    consolidation.append(item["tipo"])
                     non_cyto_added.add(chave_dedup)
 
-        # Fallback de segurança contra anomalias estruturais no PDF
         if not consolidation:
             if "TEMPTALE" in texto_upper or "TT4" in texto_upper: consolidation.append("TempTale Ambiente")
             if "TAGALERT" in texto_upper and ("2-8" in texto_upper or "REFRIGER" in texto_upper or "36-46F" in texto_upper): consolidation.append("Tag Alert Refrigerado")
             if "TAGALERT" in texto_upper and ("20-25" in texto_upper or "15-25" in texto_upper): consolidation.append("Tag Alert Ambiente")
 
-        # Atualiza as flags booleanas para manter o fluxo textual do App operando
         tem_temptale = "TempTale Ambiente" in consolidation
         tem_tagalert_ref = "Tag Alert Refrigerado" in consolidation
         tem_tagalert_amb = "Tag Alert Ambiente" in consolidation
@@ -304,24 +288,28 @@ if st.session_state.pagina_atual == "automacao":
 
         st.markdown("### 📦 Separação e Baixa de Estoque")
         ids_utilizados = []
-        linhas_alocadas = set()
         
         if df_estoque is not None and not df_estoque.empty:
+            df_estoque_temp = df_estoque.copy()
             def allocate_logger(nome_busca, label):
-                filtro = df_estoque[
-                    (df_estoque['Descricao_Clean'].str.contains(nome_busca, na=False)) & 
-                    (~df_estoque.index.isin(linhas_alocadas))
+                filtro = df_estoque_temp[
+                    df_estoque_temp['Descricao_Clean'].str.contains(nome_busca, na=False)
                 ]
                 if not filtro.empty:
                     item = filtro.iloc[0]
-                    linhas_alocadas.add(item.name) # Previne duplicação de alocação de logger único
+                    df_estoque_temp.drop(item.name, inplace=True)
+                    
                     serie = next((str(item[c]) for c in item.index if "SERIE" in c.upper()), str(item.iloc[7]) if len(item)>7 else "N/A")
-                    ids_utilizados.append((label, str(item.get('Palete', 'N/A')).strip(), str(item.get('Identificacao Estoque', 'N/A')).strip(), serie))
+                    ids_utilizados.append({
+                        "label": label,
+                        "palete": str(item.get('Palete', 'N/A')).strip(),
+                        "id_est": str(item.get('Identificacao Estoque', 'N/A')).strip(),
+                        "serie": serie
+                    })
                     st.info(f"**{label}** alocado ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')} | Série: {serie}")
                 else: 
-                    st.warning(f"⚠️ **{label}**: Sem saldo no estoque!")
+                    st.warning(f"⚠️ **{label}**: Sem saldo disponível no estoque!")
 
-            # Aloca os loggers rigorosamente respeitando a lista de consolidação processada
             for req in consolidation:
                 if req == "TempTale Ambiente": allocate_logger("TEMPTALE", "TempTale Ambiente")
                 elif req == "Tag Alert Ambiente": allocate_logger("TAGALERT 15-25", "Tag Alert Ambiente")
@@ -335,19 +323,41 @@ if st.session_state.pagina_atual == "automacao":
                     if not delivery_number: 
                         st.error("❌ Preencha o DEL#.")
                     else: 
-                        for nome, palete, id_est, serie in ids_utilizados:
-                            if "TempTale" in nome: st.session_state.consumo_local["tt"] += 1
-                            elif "Tag Alert Ambiente" in nome: st.session_state.consumo_local["ta_amb"] += 1
-                            elif "Tag Alert Refrigerado" in nome: st.session_state.consumo_local["ta_ref"] += 1
+                        webhook_url = st.secrets.get("WEBHOOK_APPS_SCRIPT", "COLOQUE_SEU_WEBHOOK_AQUI")
+                        sucesso_envio = True
                         
-                        st.success(f"✅ Baixa registrada! Reduzindo quantidades...")
-                        time.sleep(1)
-                        st.rerun() 
+                        for p in ids_utilizados:
+                            payload = {
+                                "data_uso": datetime.today().strftime('%d/%m/%Y'),
+                                "delivery_number": delivery_number,
+                                "estudo": estudo_encontrado,
+                                "te": te_resultado,
+                                "tipo_equipamento": p["label"],
+                                "palete": p["palete"],
+                                "id_estoque": p["id_est"],
+                                "cidade_destino": cidade_destino,
+                                "numero_serie": p["serie"]
+                            }
+                            try:
+                                req = urllib.request.Request(
+                                    webhook_url,
+                                    data=json.dumps(payload).encode('utf-8'),
+                                    headers={'Content-Type': 'application/json'}
+                                )
+                                urllib.request.urlopen(req, timeout=5)
+                            except Exception as ex:
+                                sucesso_envio = False
+                                st.error(f"Erro ao atualizar planilha para o item {p['id_est']}: {ex}")
+                        
+                        if sucesso_envio:
+                            st.success(f"✅ Baixa executada com sucesso! Linhas movidas para 'Loggers Já Utilizados' e gravadas na 'Auditoria' no Google Sheets.")
+                            time.sleep(2)
+                            st.rerun() 
         
         st.markdown("### 📋 Dados para Restrição e Particularidades")
         val_depositante = "056998982001260"
-        val_palete = " | ".join([p[1] for p in ids_utilizados]) or "N/A"
-        val_id = " | ".join([p[2] for p in ids_utilizados]) or "N/A"
+        val_palete = " | ".join([p["palete"] for p in ids_utilizados]) or "N/A"
+        val_id = " | ".join([p["id_est"] for p in ids_utilizados]) or "N/A"
         val_te = te_resultado
         
         def btn_copia(rotulo, valor, uid):
