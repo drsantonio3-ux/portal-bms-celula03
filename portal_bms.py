@@ -426,88 +426,6 @@ if st.session_state.pagina_atual == "automacao":
             st.info(f"✅ **FLUXO PADRÃO.** Prazo DOC: {data_limite_doc.strftime('%d/%m/%Y')} | Limite Final: {prazo_maximo.strftime('%d/%m/%Y')}")
 
 # ==========================================
-# PÁGINA 2: GERADOR DE E-MAIL (GOODS RECEIPT)
-# ==========================================
-elif st.session_state.pagina_atual == "email":
-    
-    st.markdown("""
-        <div style="background-color: #1b3834; padding: 18px 25px; border-radius: 6px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">📧 Gerador de E-mail (Goods Receipt)</h2>
-            <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
-                Módulo para geração estruturada de comunicações operacionais. Preencha os campos abaixo para formatar automaticamente o corpo do e-mail. <br>Utilize os botões de ação para copiar <b>Destinatários, Assunto e Texto Base</b> em um único clique.
-            </p>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    col_form, col_preview = st.columns([1, 1], gap="large")
-    
-    with col_form:
-        st.markdown("#### 1. Informações da Documentação")
-        c1, c2 = st.columns(2)
-        gr_num = c1.text_input("Número GR (ex: TO8616):", placeholder="TO8616")
-        del_num = c2.text_input("Delivery Number (DEL#):", placeholder="8019995629")
-        prot_num = c1.text_input("Protocol Number:", placeholder="CA052-1000")
-        ord_num = c2.text_input("Order Number:", placeholder="45794500")
-        br_inv = c1.text_input("Brazilian Invoice:", placeholder="40510-1")
-        cesv = c2.text_input("CESV:", placeholder="2601001993")
-        
-        st.markdown("#### 2. Itens do Recebimento")
-        
-        if 'num_itens' not in st.session_state:
-            st.session_state.num_itens = 1
-            
-        def add_item():
-            st.session_state.num_itens += 1
-
-        df_itens_list = []
-        for i in range(st.session_state.num_itens):
-            st.markdown(f"<p style='font-size:12px; font-weight:bold; color:#209b7c; margin-bottom:0;'>ITEM {i+1}</p>", unsafe_allow_html=True)
-            desc = st.text_input("DESCRIPTION:", key=f"desc_{i}")
-            
-            c_b, c_e, c_q = st.columns(3)
-            batch = c_b.text_input("BATCH:", key=f"batch_{i}")
-            exp = c_e.text_input("EXP_DATE:", key=f"exp_{i}")
-            qty = c_q.text_input("QUANTITY:", key=f"qty_{i}")
-            
-            st.write(" ") 
-            df_itens_list.append({"desc": desc, "batch": batch, "exp": exp, "qty": qty})
-            
-        st.button("➕ Adicionar Novo Item", on_click=add_item)
-    
-    with col_preview:
-        st.markdown("#### 3. Destinatários (To / CC)")
-        lista_emails = "BMSOPSBLA@BMS.COM; Radu.Ciobanescu@bms.com; laura.sourwine@bms.com; cso.distribution@bms.com; MG-BRZ-IMPORT-CTA@bms.com; daniela.mizushima@bms.com; Giovana.Doretto2@bms.com"
-        
-        st.markdown(f"<div style='background:#f8fafc; padding:8px; font-size:12px; border:1px solid #e2e8f0; border-radius:4px; font-family:monospace; color:#475569;'>{lista_emails}</div>", unsafe_allow_html=True)
-        components.html(f"""<button onclick="navigator.clipboard.writeText('{lista_emails}'); this.innerText='Copiado!';" style="background:#209b7c; color:white; border:none; border-radius:4px; padding:4px 12px; cursor:pointer; font-weight:bold; font-size:11px; margin-top:5px; margin-bottom:15px;">Copiar Destinatários</button>""", height=35)
-        
-        st.markdown("#### 4. Preview do E-mail")
-        assunto_base = f"BMS /GR/{gr_num if gr_num else '[GR]'}/DEL# {del_num if del_num else '[DEL]'}"
-        st.text_input("Assunto do E-mail:", value=assunto_base)
-        components.html(f"""<button onclick="navigator.clipboard.writeText('{assunto_base}'); this.innerText='Copiado!';" style="background:#209b7c; color:white; border:none; border-radius:4px; padding:4px 12px; cursor:pointer; font-weight:bold; font-size:11px; margin-top:-10px; margin-bottom:10px;">Copiar Assunto</button>""", height=35)
-
-        corpo_email = f"Dear all,\n\nI would like to inform you that we have received at DRS the following items to {prot_num if prot_num else '[Protocol Number]'}.\n\n"
-        corpo_email += f"BRAZILIAN INVOICE: {br_inv if br_inv else '[Invoice]'}\n"
-        corpo_email += f"CESV: {cesv if cesv else '[CESV]'}\n"
-        corpo_email += f"Order Number: {ord_num if ord_num else '[Order Number]'}\n"
-        corpo_email += f"DEL#: {del_num if del_num else '[DEL#]'}\n\n"
-        
-        corpo_email += "DESCRIPTION | BATCH NUMBER | EXP. DATE | QUANTITY\n"
-        corpo_email += "-"*60 + "\n"
-        for row in df_itens_list:
-            d = row.get("desc", "")
-            b = row.get("batch", "")
-            e = row.get("exp", "")
-            q = row.get("qty", "")
-            if any([d, b, e, q]): 
-                corpo_email += f"{d} | {b} | {e} | {q}\n"
-
-        st.text_area("Corpo do E-mail (Body):", value=corpo_email, height=220)
-        
-        corpo_js = corpo_email.replace('\n', '\\n').replace("'", "\\'")
-        components.html(f"""<button onclick="navigator.clipboard.writeText('{corpo_js}'); this.innerText='Corpo Copiado!';" style="background:#e59235; color:white; border:none; border-radius:4px; padding:6px 20px; cursor:pointer; font-weight:bold; font-size:12px; width:100%;">Copiar Corpo do E-mail</button>""", height=40)
-
-# ==========================================
 # PÁGINA 3: CRUZAMENTO SOLICITAÇÃO x PACKING (ASSISTENTE DE CONFERÊNCIA)
 # ==========================================
 elif st.session_state.pagina_atual == "cruzamento":
@@ -580,9 +498,10 @@ elif st.session_state.pagina_atual == "cruzamento":
                     seriais_sol = re.findall(r"\b(\d{6,8})\b", texto_sol_upper)
                     s_qty = str(len(seriais_sol)) if len(seriais_sol) > 0 else "NÃO CONSTA"
 
-                    # Extração rigorosa de lotes na Solicitação (excluindo palavras de cabeçalho)
+                    # Extração rigorosa de lotes na Solicitação (Filtrando lixo de cabeçalho)
+                    palavras_proibidas = ["DADOS", "ENVIO", "BRISTOL", "MYERS", "SQUIBB", "QUANTITY", "VALIDADE", "LOTE", "MATERIAL", "BATCH", "CLIMATIZADA", "CAMARA", "AREA", "PORTAL", "ENDERECO"]
                     s_lotes_brutos = re.findall(r"\b([A-Z0-9]{5,10}(?:\.[A-Z0-9]+)?)\b", texto_sol_upper)
-                    s_lotes_sol = [l for l in s_lotes_brutos if l not in ["QUANTITY", "VALIDADE", "LOTE", "MATERIAL", "BATCH", "CLIMATIZADA", "CAMARA"]]
+                    s_lotes_sol = [l for l in s_lotes_brutos if l not in palavras_proibidas and not l.isdigit()]
 
 
                     # --- EXTRAÇÃO DOCUMENTO VALIDADO (PACKING LIST) ---
@@ -617,9 +536,9 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_qty_matches = re.findall(r"(\d+)\s*EA", texto_packing_upper)
                     p_qty = str(sum([int(q) for q in p_qty_matches])) if p_qty_matches else "NÃO CONSTA"
 
-                    # Extração blindada de lotes da Packing List (ignora "QUANTITY", "BATCH", etc.)
+                    # Extração rigorosa de lotes na Packing List (Filtrando lixo de cabeçalho)
                     p_lotes_brutos = re.findall(r"\b([A-Z0-9]{5,10}(?:\.[A-Z0-9]+)?)\b", texto_packing_upper)
-                    p_lotes_packing = [l for l in p_lotes_brutos if l not in ["QUANTITY", "BATCH", "MATERIAL", "USE", "DATE", "STORAGE", "SERIAL"]]
+                    p_lotes_packing = [l for l in p_lotes_brutos if l not in palavras_proibidas and not l.isdigit()]
 
                     # Coleta de Seriais
                     seriais_packing = []
@@ -639,6 +558,9 @@ elif st.session_state.pagina_atual == "cruzamento":
 
                     seriais_faltantes = [s for s in seriais_packing if s not in texto_sol_upper]
                     seriais_status_ok = len(seriais_faltantes) == 0 and len(seriais_packing) > 0
+
+                    # Validação de Lotes cruzados
+                    lotes_conferem = all(any(lote_p in lote_s for lote_s in s_lotes_sol) for lote_p in p_lotes_packing[:3]) if len(p_lotes_packing) > 0 else False
 
 
                     # --- COMPARAÇÃO ESTRITA ---
@@ -689,8 +611,8 @@ elif st.session_state.pagina_atual == "cruzamento":
                             "Campo Validado": "Dados dos Produtos (Batch / Quantity / kit IDs)",
                             "Documento Fonte": f"Lotes: {', '.join(s_lotes_sol[:3])} | Seriais: {', '.join(seriais_packing)}",
                             "Documento Validado": f"Lotes: {', '.join(p_lotes_packing[:3])} | Seriais: {', '.join(seriais_packing)}",
-                            "Status": "✅ Conforme" if s_qty == p_qty and seriais_status_ok else "❌ Divergência",
-                            "Observação": "Lotes e seriais conferem." if seriais_status_ok else f"Divergência nos seriais ou lotes: {', '.join(seriais_faltantes)}"
+                            "Status": "✅ Conforme" if s_qty == p_qty and seriais_status_ok and lotes_conferem else "❌ Divergência",
+                            "Observação": "Lotes e seriais conferem." if (seriais_status_ok and lotes_conferem) else "Divergência crítica de lotes ou seriais entre os documentos."
                         }
                     ]
 
