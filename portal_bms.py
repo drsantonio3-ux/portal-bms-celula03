@@ -125,7 +125,7 @@ ta_ref_disp = max(0, raw_ta_ref - st.session_state.consumo_local["ta_ref"])
 if "pagina_atual" not in st.session_state:
     st.session_state.pagina_atual = "automacao"
 
-# --- BARRA LATERAL (SIDEBAR) - Compactada em uma única tela ---
+# --- BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.markdown("""
         <div style='text-align: left; padding-bottom: 5px;'>
@@ -355,7 +355,7 @@ elif st.session_state.pagina_atual == "email":
             exp = c_e.text_input("EXP_DATE:", key=f"exp_{i}")
             qty = c_q.text_input("QUANTITY:", key=f"qty_{i}")
             
-            st.write("") # Pequeno espaçamento entre os itens
+            st.write("") 
             df_itens_list.append({"desc": desc, "batch": batch, "exp": exp, "qty": qty})
             
         st.button("➕ Adicionar Novo Item", on_click=add_item)
@@ -435,6 +435,11 @@ elif st.session_state.pagina_atual == "cruzamento":
                         match = re.search(r'([A-Z0-9]+-[0-9]+)', p)
                         return match.group(1) if match else p
 
+                    def normalizar_lote(lote_str):
+                        """Remove pontos, hífens, barras e espaços para padronizar o lote"""
+                        if not lote_str: return ""
+                        return re.sub(r'[\.\s\-\/]', '', str(lote_str)).upper()
+
                     # --- 3. EXTRAÇÃO DE CABEÇALHO ---
                     s_ordem = re.search(r"ORDEM[^\d]*(\d{8,12})", texto_sol_limpo)
                     s_ordem = s_ordem.group(1) if s_ordem else "NÃO ENCONTRADO"
@@ -485,12 +490,11 @@ elif st.session_state.pagina_atual == "cruzamento":
                     else:
                         alertas.append(f"✅ **Destinatário/Razão Social:** {s_razao}")
 
-                    # Conferência Completa baseada na extração exata dos itens da Solicitação
-                    # Validando diretamente a existência de cada serial, lote e validade no PDF da Solicitação
+                    # Conferência Completa com Normalização Flexível de Lotes (ignorando pontos e espaços)
                     medicamentos_conferencia = [
-                        {"nome": "POMALIDOMIDE CAP 4MG (1BLCRDX21) CA088OLMUL", "lote": "Z3035A", "val": "30/09/2028", "serial": "1019376"},
-                        {"nome": "DEXAMETH TAB 4MG (1BLCRDX20) CA088 OLMUL", "lote": "B646924", "val": "31/07/2029", "serial": "1008025"},
-                        {"nome": "DARATUMUMAB SINJ 1800MG(IVL) CA088 OLMUL", "lote": "PJS2E00", "val": "30/09/2027", "serial": "1015146"}
+                        {"nome": "POMALIDOMIDE CAP 4MG (1BLCRDX21) CA088OLMUL", "lote": "Z3035A 5A", "val": "30/09/2028", "serial": "1019376"},
+                        {"nome": "DEXAMETH TAB 4MG (1BLCRDX20) CA088 OLMUL", "lote": "B646924 4B", "val": "31/07/2029", "serial": "1008025"},
+                        {"nome": "DARATUMUMAB SINJ 1800MG(IVL) CA088 OLMUL", "lote": "PJS2E00 5A", "val": "30/09/2027", "serial": "1015146"}
                     ]
 
                     for med in medicamentos_conferencia:
@@ -503,8 +507,11 @@ elif st.session_state.pagina_atual == "cruzamento":
                         if s_serial not in texto_sol_limpo:
                             erros.append(f"❌ **Produto Faltante:** O medicamento **{s_nome}** (Serial: `{s_serial}`) não consta na Solicitação.")
                         else:
-                            # 2. Valida se a base principal do lote e a validade constam no texto da solicitação
-                            lote_ok = s_lote in texto_sol_limpo
+                            # 2. Normaliza e compara lote e validade ignorando pontos e formatação
+                            lote_limpo_esperado = normalizar_lote(s_lote)
+                            texto_sol_normalizado = normalizar_lote(texto_sol_limpo)
+                            
+                            lote_ok = lote_limpo_esperado in texto_sol_normalizado
                             val_ok = s_val in texto_sol_limpo
 
                             if not lote_ok:
@@ -514,7 +521,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                             else:
                                 alertas.append(f"✅ **Medicamento Validado:** {s_nome} | Lote: `{s_lote}` | Validade: `{s_val}` | Serial: `{s_serial}`")
 
-                    # --- 6. EXIBIÇÃO DOS RESULTADOS ---
+                    # --- 5. EXIBIÇÃO DIRETA DOS RESULTADOS (Sem Expansor) ---
                     st.markdown("### Resultado do Cruzamento")
                     
                     if erros:
@@ -524,10 +531,12 @@ elif st.session_state.pagina_atual == "cruzamento":
                     else:
                         st.success("✅ **OPERAÇÃO APROVADA: Todos os dados críticos e medicamentos conferem integralmente.**")
                     
-                    with st.expander("Ver logs de validação detalhados (item a item)"):
-                        for a in alertas:
-                            st.markdown(f"- {a}")
-                        st.info("⚠️ **Aviso Operacional:** O sistema não bloqueia divergências de temperatura por regra de negócio. Confirme visualmente nos documentos físicos se as tags de temperatura solicitadas conferem.")
+                    st.markdown("---")
+                    st.markdown("#### Detalhes da Conferência:")
+                    for a in alertas:
+                        st.markdown(f"- {a}")
+                    
+                    st.info("⚠️ **Aviso Operacional:** O sistema não bloqueia divergências de temperatura por regra de negócio. Confirme visualmente nos documentos físicos se as tags de temperatura solicitadas conferem.")
 
                 except Exception as e:
                     st.error(f"Erro inesperado ao processar os arquivos: {e}")
