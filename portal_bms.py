@@ -517,7 +517,7 @@ elif st.session_state.pagina_atual == "cruzamento":
             <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">⚖️ Assistente de Conferência - Validação de Remessa</h2>
             <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
                 Aja como a 'Assistente de Conferência'. Analise o texto do Shipment e da Solicitação fornecidos.<br>
-                Compare estritamente os campos: Dados de Protocolo, Shipment Number, Site/Depot Number, Centre and Department Name, Depot site Address, Investigator Name, Total quantity in shipment e Dados dos Produtos.
+                Compare estritamente os campos solicitados e gere a tabela com as tags HTML de destaque.
             </p>
         </div>
     """, unsafe_allow_html=True)
@@ -665,7 +665,10 @@ elif st.session_state.pagina_atual == "cruzamento":
                     df_exibicao["Status"] = df_exibicao["Status"].apply(estilizar_status)
 
                     st.markdown("### Tabela de Validação de Remessa")
-                    st.markdown(df_exibicao.to_markdown(index=False), unsafe_allow_html=True)
+                    
+                    # Renderização via HTML para respeitar as tags <span style="color:red"> sem depender do pacote 'tabulate'
+                    html_tabela = df_exibicao.to_html(escape=False, index=False, classes="dataframe")
+                    st.markdown(f"<div style='overflow-x:auto;'>{html_tabela}</div>", unsafe_allow_html=True)
 
                     tem_divergencia = any("Divergência" in row["Status"] or "Ausente" in row["Status"] for row in dados_validacao)
                     
