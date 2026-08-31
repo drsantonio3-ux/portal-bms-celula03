@@ -86,9 +86,11 @@ def verificar_senha():
 if not verificar_senha():
     st.stop()
 
-# --- CONTROLE DE SESSÃO PARA BLOQUEIO IMEDIATO DE LOGGERS ---
+# --- CONTROLE DE SESSÃO PARA BLOQUEIO IMEDIATO ---
 if "seriais_consumidos" not in st.session_state:
     st.session_state.seriais_consumidos = set()
+if "ids_consumidos" not in st.session_state:
+    st.session_state.ids_consumidos = set()
 
 # --- CARREGAR DADOS E ESTOQUE ---
 @st.cache_data(ttl=5)
@@ -103,9 +105,16 @@ def carregar_dados_sheets():
     
     if df_est is not None: 
         df_est['Descricao_Clean'] = df_est['Descricao'].astype(str).str.upper()
-        col_serie_est = next((c for c in df_est.columns if "SERIE" in c.upper() or "SERIE" in c), None)
+        
+        # Identifica colunas de série e ID dinamicamente
+        col_serie_est = next((c for c in df_est.columns if "SERIE" in c.upper() or "SÉRIE" in c.upper()), None)
+        col_id_est = next((c for c in df_est.columns if "IDENTIFICACAO" in c.upper() or "ID" in c.upper()), None)
+        
+        # Aplica filtro robusto eliminando itens já consumidos nesta sessão
         if col_serie_est and st.session_state.seriais_consumidos:
             df_est = df_est[~df_est[col_serie_est].astype(str).str.strip().isin(st.session_state.seriais_consumidos)]
+        if col_id_est and st.session_state.ids_consumidos:
+            df_est = df_est[~df_est[col_id_est].astype(str).str.strip().isin(st.session_state.ids_consumidos)]
 
     try:
         df_tes = pd.read_csv(url_tes)
@@ -307,11 +316,11 @@ if st.session_state.pagina_atual == "automacao":
                     item = filtro.iloc[0]
                     df_estoque_temp.drop(item.name, inplace=True)
                     
-                    serie = next((str(item[c]) for c in item.index if "SERIE" in c.upper() or "SERIE" in c), str(item.iloc[7]) if len(item)>7 else "N/A")
+                    serie = next((str(item[c]) for c in item.index if "SERIE" in c.upper() or "SÉRIE" in c.upper()), str(item.iloc[7]) if len(item)>7 else "N/A")
                     ids_utilizados.append({
                         "label": label,
                         "palete": str(item.get('Palete', 'N/A')).strip(),
-                        "id_est": str(item.get('Identificacao Estoque', 'N/A')).strip(),
+                        "id_est": str(item.get('Identificacao Estoque', item.get('Identificacao Estoque', 'N/A'))).strip(),
                         "serie": serie
                     })
                     st.info(f"**{label}** alocado ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')} | Série: {serie}")
@@ -333,11 +342,11 @@ if st.session_state.pagina_atual == "automacao":
                     else: 
                         webhook_url = "https://script.google.com/macros/s/AKfycbzpwZC2LW7PQ1JGMkJIZD3Rxd4nv4pfEZ1QS1D9jDxQbt4Qf2hiCmv9dJ8pAJnBHJglug/exec"
                         
-                        # Adiciona todos os seriais na sessão para bloqueio instantâneo
+                        # Adiciona imediatamente na sessão para sumir do painel
                         for p in ids_utilizados:
                             st.session_state.seriais_consumidos.add(str(p["serie"]).strip())
+                            st.session_state.ids_consumidos.add(str(p["id_est"]).strip())
                         
-                        # Monta o pacote em lote (única requisição HTTP)
                         payload = {
                             "data_uso": datetime.today().strftime('%d/%m/%Y'),
                             "delivery_number": delivery_number,
@@ -360,11 +369,10 @@ if st.session_state.pagina_atual == "automacao":
                                 data=json.dumps(payload).encode('utf-8'),
                                 headers={'Content-Type': 'application/json'}
                             )
-                            # Timeout estendido para 25 segundos para evitar falhas de rede
                             urllib.request.urlopen(req, timeout=25)
                             
                             st.cache_data.clear()
-                            st.success(f"✅ Baixa executada com sucesso! Linhas removidas do estoque ativo e gravadas no Sheets.")
+                            st.success(f"✅ Baixa executada com sucesso! Itens removidos do estoque ativo.")
                             time.sleep(2)
                             st.rerun() 
                         except Exception as ex:
@@ -659,7 +667,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                     for a in alertas:
                         st.markdown(f"- {a}")
                     
-                    st.info("⚠️ **Aviso Operacional:** O sistema não bloqueiza divergências de temperatura por regra de negócio. Confirme visualmente nos documentos físicos se as tags de temperatura solicitadas conferem.")
+                    st.info("⚠️ **Aviso Operacional:** O sistema não bloqueia divergências de temperatura por regra de negócio. Confirme visualmente nos documentos físicos se as tags de temperatura solicitadas conferem.")
 
                 except Exception as e:
                     st.error(f"Erro inesperado ao processar os arquivos: {e}")
