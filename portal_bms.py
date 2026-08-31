@@ -86,7 +86,7 @@ def verificar_senha():
 if not verificar_senha():
     st.stop()
 
-# --- CONTROLE DE SESSÃO PARA ITENS JÁ UTILIZADOS ---
+# --- CONTROLE DE SESSÃO PARA BLOQUEIO IMEDIATO DE LOGGERS ---
 if "seriais_consumidos" not in st.session_state:
     st.session_state.seriais_consumidos = set()
 
@@ -103,8 +103,7 @@ def carregar_dados_sheets():
     
     if df_est is not None: 
         df_est['Descricao_Clean'] = df_est['Descricao'].astype(str).str.upper()
-        # Identifica a coluna de série dinamicamente para filtrar os já consumidos na sessão
-        col_serie_est = next((c for c in df_est.columns if "SERIE" in c.upper()), None)
+        col_serie_est = next((c for c in df_est.columns if "SERIE" in c.upper() or "SERIE" in c), None)
         if col_serie_est and st.session_state.seriais_consumidos:
             df_est = df_est[~df_est[col_serie_est].astype(str).str.strip().isin(st.session_state.seriais_consumidos)]
 
@@ -308,7 +307,7 @@ if st.session_state.pagina_atual == "automacao":
                     item = filtro.iloc[0]
                     df_estoque_temp.drop(item.name, inplace=True)
                     
-                    serie = next((str(item[c]) for c in item.index if "SERIE" in c.upper()), str(item.iloc[7]) if len(item)>7 else "N/A")
+                    serie = next((str(item[c]) for c in item.index if "SERIE" in c.upper() or "SERIE" in c), str(item.iloc[7]) if len(item)>7 else "N/A")
                     ids_utilizados.append({
                         "label": label,
                         "palete": str(item.get('Palete', 'N/A')).strip(),
@@ -336,7 +335,6 @@ if st.session_state.pagina_atual == "automacao":
                         sucesso_envio = True
                         
                         for p in ids_utilizados:
-                            # Adiciona imediatamente na lista de consumo local para sumir do sistema
                             st.session_state.seriais_consumidos.add(str(p["serie"]).strip())
                             
                             payload = {
@@ -362,7 +360,6 @@ if st.session_state.pagina_atual == "automacao":
                                 st.error(f"Erro ao atualizar planilha para o item {p['id_est']}: {ex}")
                         
                         if sucesso_envio:
-                            # Limpa o cache para forçar a leitura nova da planilha na próxima consulta
                             st.cache_data.clear()
                             st.success(f"✅ Baixa executada com sucesso! Linhas removidas do estoque ativo e movidas para 'Loggers Já Utilizados'.")
                             time.sleep(2)
