@@ -223,9 +223,56 @@ if st.session_state.pagina_atual == "automacao":
                 if estudo_encontrado in str(row['Estudo']).upper():
                     te_resultado = str(row['TE']).strip(); break
 
-        tem_temptale = "TEMPTALE" in texto_upper or "TT4" in texto_upper
-        tem_tagalert_ref = "TAGALERT" in texto_upper and ("2-8" in texto_upper or "REFRIGER" in texto_upper or "36-46F" in texto_upper)
-        tem_tagalert_amb = "TAGALERT" in texto_upper and ("20-25" in texto_upper or "15-25" in texto_upper)
+        # --- MOTOR DE REGRAS: SEPARAÇÃO DE CAIXAS, TEMPERATURA E CITOTÓXICOS ---
+        cytotoxic_list = ["BORTEZOMIB", "PACLITAXEL", "SPRYCEL", "CYCLOPHOSPHAMIDE"]
+        blocos_storage = re.split(r'STORAGE\s*:', texto_upper)
+        loggers_to_allocate = []
+
+        for i in range(1, len(blocos_storage)):
+            bloco_atual = blocos_storage[i]
+            bloco_anterior = blocos_storage[i-1]
+            
+            # Isola a instrução de armazenamento e logger até o término da validação daquela linha
+            instrucao = bloco_atual.split('Y/N')[0] if 'Y/N' in bloco_atual else bloco_atual[:200]
+            
+            # Análise estrita de temperatura (Limites diferentes de 2-8 tornam-se Ambiente)
+            is_ref = "2-8" in instrucao or "REFRIGER" in instrucao
+            
+            logger_type = None
+            if "TEMPTALE" in instrucao or "TT4" in instrucao:
+                logger_type = "TempTale Ambiente"
+            elif "TAGALERT" in instrucao:
+                logger_type = "Tag Alert Refrigerado" if is_ref else "Tag Alert Ambiente"
+            
+            # Varredura Exclusiva por Nomenclatura (Ignorando a palavra CYTOTOXIC)
+            contexto_busca = (bloco_anterior[-200:] + instrucao)
+            is_cyto = any(cyto in contexto_busca for cyto in cytotoxic_list)
+            
+            if logger_type:
+                loggers_to_allocate.append({"tipo": logger_type, "is_cyto": is_cyto})
+
+        # Consolidação Final (Geração da Array de Separação de Caixas)
+        consolidation = []
+        non_cyto_added = set()
+
+        for item in loggers_to_allocate:
+            if item["is_cyto"]:
+                consolidation.append(item["tipo"]) # Força isolamento de caixa
+            else:
+                if item["tipo"] not in non_cyto_added:
+                    consolidation.append(item["tipo"]) # Dedup caixas padrão
+                    non_cyto_added.add(item["tipo"])
+
+        # Fallback de segurança contra anomalias estruturais no PDF
+        if not consolidation:
+            if "TEMPTALE" in texto_upper or "TT4" in texto_upper: consolidation.append("TempTale Ambiente")
+            if "TAGALERT" in texto_upper and ("2-8" in texto_upper or "REFRIGER" in texto_upper or "36-46F" in texto_upper): consolidation.append("Tag Alert Refrigerado")
+            if "TAGALERT" in texto_upper and ("20-25" in texto_upper or "15-25" in texto_upper): consolidation.append("Tag Alert Ambiente")
+
+        # Atualiza as flags booleanas para manter o fluxo textual do App operando
+        tem_temptale = "TempTale Ambiente" in consolidation
+        tem_tagalert_ref = "Tag Alert Refrigerado" in consolidation
+        tem_tagalert_amb = "Tag Alert Ambiente" in consolidation
         is_ambiente = tem_temptale or tem_tagalert_amb or "30C" in texto_upper
 
         cidade_destino = "NÃO IDENTIFICADA"
@@ -248,19 +295,28 @@ if st.session_state.pagina_atual == "automacao":
 
         st.markdown("### 📦 Separação e Baixa de Estoque")
         ids_utilizados = []
+        linhas_alocadas = set()
+        
         if df_estoque is not None and not df_estoque.empty:
-            def add_item(nome_busca, label):
-                filtro = df_estoque[df_estoque['Descricao_Clean'].str.contains(nome_busca, na=False)]
+            def allocate_logger(nome_busca, label):
+                filtro = df_estoque[
+                    (df_estoque['Descricao_Clean'].str.contains(nome_busca, na=False)) & 
+                    (~df_estoque.index.isin(linhas_alocadas))
+                ]
                 if not filtro.empty:
                     item = filtro.iloc[0]
+                    linhas_alocadas.add(item.name) # Previne duplicação de alocação de logger único
                     serie = next((str(item[c]) for c in item.index if "SERIE" in c.upper()), str(item.iloc[7]) if len(item)>7 else "N/A")
                     ids_utilizados.append((label, str(item.get('Palete', 'N/A')).strip(), str(item.get('Identificacao Estoque', 'N/A')).strip(), serie))
                     st.info(f"**{label}** alocado ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')} | Série: {serie}")
-                else: st.warning(f"⚠️ **{label}**: Sem saldo no estoque!")
+                else: 
+                    st.warning(f"⚠️ **{label}**: Sem saldo no estoque!")
 
-            if tem_temptale: add_item("TEMPTALE", "TempTale Ambiente")
-            if tem_tagalert_amb: add_item("TAGALERT 15-25", "Tag Alert Ambiente")
-            if tem_tagalert_ref: add_item("TAGALERT 2-8", "Tag Alert Refrigerado")
+            # Aloca os loggers rigorosamente respeitando a lista de consolidação processada
+            for req in consolidation:
+                if req == "TempTale Ambiente": allocate_logger("TEMPTALE", "TempTale Ambiente")
+                elif req == "Tag Alert Ambiente": allocate_logger("TAGALERT 15-25", "Tag Alert Ambiente")
+                elif req == "Tag Alert Refrigerado": allocate_logger("TAGALERT 2-8", "Tag Alert Refrigerado")
 
             col_del, col_btn = st.columns([2, 1])
             with col_del: delivery_number = st.text_input("DEL# (Delivery Number) para registro:")
@@ -280,7 +336,10 @@ if st.session_state.pagina_atual == "automacao":
                         st.rerun() 
         
         st.markdown("### 📋 Dados para Restrição e Particularidades")
-        val_depositante, val_palete, val_id, val_te = "056998982001260", " | ".join([p[1] for p in ids_utilizados]) or "N/A", " | ".join([p[2] for p in ids_utilizados]) or "N/A", te_resultado
+        val_depositante = "056998982001260"
+        val_palete = " | ".join([p[1] for p in ids_utilizados]) or "N/A"
+        val_id = " | ".join([p[2] for p in ids_utilizados]) or "N/A"
+        val_te = te_resultado
         
         def btn_copia(rotulo, valor, uid):
             html = f"""<div style="display:flex; justify-content:space-between; align-items: center; padding:6px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; margin-bottom:5px;">
@@ -408,7 +467,6 @@ elif st.session_state.pagina_atual == "cruzamento":
         </div>
     """, unsafe_allow_html=True)
     
-    # Inicializa a chave de controle para permitir a limpeza manual via botão
     if "file_uploader_key" not in st.session_state:
         st.session_state.file_uploader_key = 0
 
@@ -429,7 +487,6 @@ elif st.session_state.pagina_atual == "cruzamento":
         if st.button("Executar Cruzamento de Dados", use_container_width=True):
             with st.spinner("Lendo PDFs e cruzando informações..."):
                 try:
-                    # --- 1. LEITURA BRUTA DOS PDFs ---
                     leitor_sol = PyPDF2.PdfReader(arquivo_sol)
                     texto_sol = " ".join([p.extract_text() for p in leitor_sol.pages]).upper()
                     texto_sol_limpo = re.sub(r'\s+', ' ', texto_sol)
@@ -438,7 +495,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                     texto_packing = " ".join([p.extract_text() for p in leitor_packing.pages]).upper()
                     texto_packing_limpo = re.sub(r'\s+', ' ', texto_packing)
 
-                    # --- 2. FUNÇÕES AUXILIARES DE NORMALIZAÇÃO ---
                     def limpar(t): return re.sub(r'\s+', ' ', str(t)).strip()
                     
                     def isolarprotocolo(p):
@@ -463,7 +519,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                             return f"{dia}/{mes}/{ano}"
                         return data_str
 
-                    # --- 3. EXTRAÇÃO DE CABEÇALHO ---
                     s_ordem = re.search(r"ORDEM[^\d]*(\d{8,12})", texto_sol_limpo)
                     s_ordem = s_ordem.group(1) if s_ordem else "NÃO ENCONTRADO"
                     
@@ -488,7 +543,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_pi_match = re.search(r"DR\.?\s*([A-Z\s]+?)(?=\s*TEL)", texto_packing_limpo)
                     p_pi = limpar(p_pi_match.group(1)) if p_pi_match else "NÃO ENCONTRADO"
 
-                    # --- 4. EXTRAÇÃO DINÂMICA DA PACKING LIST ---
                     padrao_packing = re.findall(
                         r"(\d{6,8})\s+([A-Z0-9\.\-]+)\s+1\s+EA\s+(\d{2}-[A-Z]{3}-\d{4})\s+([A-Z0-9\s\(\)]+?)\s+SERIAL NO\.\s*\((\d{6,8})\)",
                         texto_packing_limpo
@@ -511,7 +565,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                             {"nome": "DARATUMUMAB SINJ 1800MG(IVL) CA088 OLMUL", "lote": "PJS2E00.5A", "val": "30/09/2027", "serial": "1015146"}
                         ]
 
-                    # --- 5. MOTOR DE VALIDAÇÃO CRUZADA ---
                     erros = []
                     alertas = []
 
@@ -521,7 +574,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                     if s_prot != p_prot: erros.append(f"**Protocolo:** Solicitação [{s_prot}] ❌ PACKING [{p_prot}]")
                     else: alertas.append(f"✅ **Protocolo:** {s_prot}")
 
-                    # Validação de PI / Centro
                     pi_sol_clean = limpar(re.sub(r'^DR\.?\s*', '', s_pi))
                     pi_packing_clean = limpar(re.sub(r'^DR\.?\s*', '', p_pi))
                     razao_bate = (s_razao in p_shipto) or (p_shipto in s_razao)
@@ -536,7 +588,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                     else:
                         alertas.append(f"✅ **Destinatário/Razão Social:** {s_razao}")
 
-                    # Validação cruzada ignorando pontos e formatações de lote
                     texto_sol_norm = normalizar_texto(texto_sol_limpo)
 
                     for med in medicamentos_conferencia:
@@ -559,7 +610,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                             else:
                                 alertas.append(f"✅ **Medicamento Validado:** {s_nome} | Lote: `{s_lote}` | Validade: `{s_val}` | Serial: `{s_serial}`")
 
-                    # --- 6. EXIBIÇÃO DIRETA DOS RESULTADOS ---
                     st.markdown("### Resultado do Cruzamento")
                     
                     if erros:
