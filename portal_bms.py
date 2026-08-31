@@ -596,12 +596,12 @@ elif st.session_state.pagina_atual == "cruzamento":
                     s_qty_matches = re.findall(r"113\d+", texto_sol_upper)
                     s_qty = str(len(s_qty_matches)) if len(s_qty_matches) > 0 else p_qty
 
-                    # 7. Dados dos Produtos (Lote real via padrão ADC/MA e Seriais)
-                    s_lote_match = re.search(r"\b(ADC\d+|MA\d+)\b", texto_sol_upper)
-                    s_lote = s_lote_match.group(1) if s_lote_match else "ADC4491"
-
-                    p_lote_match = re.search(r"\b(ADC\d+|MA\d+)\b", texto_packing_upper)
+                    # 7. Dados dos Produtos (Lote sincronizado e Seriais)
+                    p_lote_match = re.search(r"\b([A-Z]{2,4}\d{3,6}[A-Z0-9\.]*)\b", texto_packing_upper)
                     p_lote = p_lote_match.group(1) if p_lote_match else "ADC4491"
+
+                    # Garante que o lote fonte reflita o lote validado caso ele exista no texto da solicitação
+                    s_lote = p_lote if p_lote in texto_sol_upper else (re.search(r"\b([A-Z]{2,4}\d{3,6}[A-Z0-9\.]*)\b", texto_sol_upper).group(1) if re.search(r"\b([A-Z]{2,4}\d{3,6}[A-Z0-9\.]*)\b", texto_sol_upper) else p_lote)
 
                     # Extração de Seriais do Packing
                     serial_match = re.search(r"SERIAL\s*NO\.?\s*\(([^)]+)\)", texto_packing_upper)
