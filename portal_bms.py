@@ -143,7 +143,6 @@ with st.sidebar:
 
     st.write("") 
 
-    # Métricas da barra lateral baseadas no estoque atual do Sheets
     raw_tt = len(df_estoque[df_estoque['Descricao_Clean'].str.contains("TEMPTALE", na=False)]) if df_estoque is not None else 0
     raw_ta_amb = len(df_estoque[df_estoque['Descricao_Clean'].str.contains("TAGALERT 15-25", na=False)]) if df_estoque is not None else 0
     raw_ta_ref = len(df_estoque[df_estoque['Descricao_Clean'].str.contains("TAGALERT 2-8", na=False)]) if df_estoque is not None else 0
@@ -323,7 +322,7 @@ if st.session_state.pagina_atual == "automacao":
                     if not delivery_number: 
                         st.error("❌ Preencha o DEL#.")
                     else: 
-                        webhook_url = st.secrets.get("WEBHOOK_APPS_SCRIPT", "COLOQUE_SEU_WEBHOOK_AQUI")
+                        webhook_url = st.secrets.get("WEBHOOK_APPS_SCRIPT", "https://script.google.com/macros/s/SEU_ID_DE_DEPLOY_AQUI/exec")
                         sucesso_envio = True
                         
                         for p in ids_utilizados:
