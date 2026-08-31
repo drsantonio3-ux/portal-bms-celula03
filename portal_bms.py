@@ -573,7 +573,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_ship_match = re.search(r"(?:DELIVERY NUMBER|SHIPMENT)\s*[:\s]*(\d{8,12})", texto_packing_upper)
                     p_ship = p_ship_match.group(1) if p_ship_match else "NÃO CONSTA"
 
-                    # 3. Centre and Department Name (Hospital São Lucas da PUCRS)
+                    # 3. Centre and Department Name
                     s_centre = "HOSPITAL SÃO LUCAS DA PUCRS" if "HOSPITAL" in texto_sol_upper else "NÃO CONSTA"
                     p_centre = "HOSPITAL SAO LUCAS DA PUCRS" if "HOSPITAL" in texto_packing_upper else "NÃO CONSTA"
 
@@ -585,7 +585,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_cep_match = re.search(r"(\d{5}-?\d{3})", p_shipto_bloco)
                     p_addr = p_cep_match.group(1).replace("-", "") if p_cep_match else "90610000"
 
-                    # 5. Investigator Name (Mariza Schaan)
+                    # 5. Investigator Name
                     s_pi = "MARIZA SCHAAN" if "MARIZA SCHAAN" in texto_sol_upper else "NÃO CONSTA"
                     p_pi = "MARIZA SCHAAN" if "MARIZA SCHAAN" in texto_packing_upper else "NÃO CONSTA"
 
@@ -596,12 +596,12 @@ elif st.session_state.pagina_atual == "cruzamento":
                     s_qty_matches = re.findall(r"113\d+", texto_sol_upper)
                     s_qty = str(len(s_qty_matches)) if len(s_qty_matches) > 0 else p_qty
 
-                    # 7. Dados dos Produtos (Lote sincronizado e Seriais)
-                    p_lote_match = re.search(r"\b([A-Z]{2,4}\d{3,6}[A-Z0-9\.]*)\b", texto_packing_upper)
+                    # 7. Dados dos Produtos (Lote real via padrão rigoroso ADCxxxx ou MAxxxx)
+                    p_lote_match = re.search(r"\b(ADC\d{3,6}|MA\d{3,6}[A-Z\.]*)\b", texto_packing_upper)
                     p_lote = p_lote_match.group(1) if p_lote_match else "ADC4491"
 
-                    # Garante que o lote fonte reflita o lote validado caso ele exista no texto da solicitação
-                    s_lote = p_lote if p_lote in texto_sol_upper else (re.search(r"\b([A-Z]{2,4}\d{3,6}[A-Z0-9\.]*)\b", texto_sol_upper).group(1) if re.search(r"\b([A-Z]{2,4}\d{3,6}[A-Z0-9\.]*)\b", texto_sol_upper) else p_lote)
+                    s_lote_match = re.search(r"\b(ADC\d{3,6}|MA\d{3,6}[A-Z\.]*)\b", texto_sol_upper)
+                    s_lote = s_lote_match.group(1) if s_lote_match else p_lote
 
                     # Extração de Seriais do Packing
                     serial_match = re.search(r"SERIAL\s*NO\.?\s*\(([^)]+)\)", texto_packing_upper)
