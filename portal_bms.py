@@ -495,19 +495,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                         if medico in texto_sol_upper:
                             s_pi = medico; break
 
-                    # Extração flexível e robusta de seriais/peças do NEWSE (suporta de 5 a 7 dígitos, ex: 57159)
-                    seriais_sol_brutos = re.findall(r'\b(\d{5,7})\b', texto_sol_upper)
-                    seriais_sol = [
-                        s for s in seriais_sol_brutos 
-                        if not s.startswith("332") 
-                        and not s.startswith("906") 
-                        and not s.startswith("147") 
-                        and not s.startswith("802")
-                        and len(s) in [5, 6, 7]
-                    ]
-                    seriais_sol = list(dict.fromkeys(seriais_sol))
-                    s_qty = str(len(seriais_sol)) if len(seriais_sol) > 0 else "NÃO CONSTA"
-
                     # --- EXTRAÇÃO DOCUMENTO VALIDADO (PACKING LIST) ---
                     p_prot_match = re.search(r"PROTOCOL NUMBER\s*[:\s]*([A-Z0-9\-\/]+)", texto_packing_upper)
                     if p_prot_match:
@@ -556,6 +543,10 @@ elif st.session_state.pagina_atual == "cruzamento":
                     else:
                         seriais_packing = re.findall(r"\b\d{5,8}\b", texto_packing_upper)
                     seriais_packing = list(dict.fromkeys(seriais_packing))
+
+                    # Coleta de Seriais da Solicitação confrontando diretamente com os seriais encontrados na packing list
+                    seriais_sol = [s for s in seriais_packing if s in texto_sol_upper]
+                    s_qty = str(len(seriais_sol)) if len(seriais_sol) > 0 else "NÃO CONSTA"
 
                     # Validação estrita focada apenas nos números de série
                     seriais_faltantes = [s for s in seriais_packing if s not in texto_sol_upper]
