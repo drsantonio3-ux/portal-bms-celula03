@@ -491,15 +491,20 @@ elif st.session_state.pagina_atual == "cruzamento":
                     s_addr = s_cep_match.group(1).replace("-", "") if s_cep_match else (re.search(r"\b(\d{8})\b", texto_sol_upper).group(1) if re.search(r"\b(\d{8})\b", texto_sol_upper) else "NÃO CONSTA")
 
                     s_pi = "NÃO CONSTA"
-                    for medico in ["JAYR SCHMIDT", "FLAVIO AUGUSTO", "MARIZA SCHAAN"]:
+                    for medico in ["JAYR SCHMIDT", "FLAVIO AUGUSTO", "MARIZA SCHAAN", "ARINILDA"]:
                         if medico in texto_sol_upper:
                             s_pi = medico; break
 
-                    # Extração rigorosa de seriais/peças do NEWSE
-                    seriais_sol_brutos = re.findall(r'\b(11\d{5})\b', texto_sol_upper)
-                    if not seriais_sol_brutos:
-                        seriais_sol_brutos = re.findall(r'\b(\d{7})\b', texto_sol_upper)
-                    seriais_sol = [s for s in seriais_sol_brutos if not s.startswith("332") and not s.startswith("906") and s != s_ship[:7]]
+                    # Extração flexível e robusta de seriais/peças do NEWSE (suporta de 5 a 7 dígitos, ex: 57159)
+                    seriais_sol_brutos = re.findall(r'\b(\d{5,7})\b', texto_sol_upper)
+                    seriais_sol = [
+                        s for s in seriais_sol_brutos 
+                        if not s.startswith("332") 
+                        and not s.startswith("906") 
+                        and not s.startswith("147") 
+                        and not s.startswith("802")
+                        and len(s) in [5, 6, 7]
+                    ]
                     seriais_sol = list(dict.fromkeys(seriais_sol))
                     s_qty = str(len(seriais_sol)) if len(seriais_sol) > 0 else "NÃO CONSTA"
 
@@ -528,42 +533,14 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_addr = p_cep_match.group(1).replace("-", "") if p_cep_match else "NÃO CONSTA"
 
                     p_pi = "NÃO CONSTA"
-                    for medico in ["JAYR SCHMIDT", "FLAVIO AUGUSTO", "MARIZA SCHAAN"]:
+                    for medico in ["JAYR SCHMIDT", "FLAVIO AUGUSTO", "MARIZA SCHAAN", "ARINILDA"]:
                         if medico in p_shipto_bloco or medico in texto_packing_upper:
                             p_pi = medico; break
 
                     p_qty_matches = re.findall(r"(\d+)\s*EA", texto_packing_upper)
                     p_qty = str(sum([int(q) for q in p_qty_matches])) if p_qty_matches else "NÃO CONSTA"
 
-                    # --- EXTRAÇÃO DE LOTES DA PACKING LIST (ANCORADO NA PALAVRA BATCH) ---
-                    p_lotes_packing = []
-                    match_batch = re.search(r'\bBATCH\b\s*([A-Z0-9]+)', texto_packing_limpo)
-                    if match_batch:
-                        p_lotes_packing.append(match_batch.group(1))
-                    else:
-                        b_matches = re.findall(r'\b([A-Z]{2,4}\d{3,6})\b', texto_packing_upper)
-                        if b_matches:
-                            p_lotes_packing.extend([b for b in b_matches if b not in ["NA", "N/A"]])
-                    p_lotes_packing = list(dict.fromkeys(p_lotes_packing))
-
-                    # --- EXTRAÇÃO DE LOTES NEWSE (SOLICITAÇÃO) CONFRONTADO COM O LOTE DA PACKING ---
-                    s_lotes_sol = []
-                    # Se encontrarmos exatamente o mesmo lote da packing list dentro do texto do newse, validamos e capturamos ele diretamente.
-                    for lote_pack in p_lotes_packing:
-                        if lote_pack in texto_sol_upper:
-                            s_lotes_sol.append(lote_pack)
-                    
-                    if not s_lotes_sol:
-                        # Fallback seguro buscando padrões alfanuméricos válidos de lote (ex: 3 letras + 4 dígitos)
-                        candidatos_lote = re.findall(r'\b([A-Z]{2,4}\d{3,6})\b', texto_sol_upper)
-                        unidades_invalidas = {"IU", "ML", "MG", "PFS", "IPFS", "CA056", "TE1663", "SENSITECH", "TAGALERT", "BINOCRIT"}
-                        for cand in candidatos_lote:
-                            if not any(ui in cand for ui in unidades_invalidas) and cand not in ["NA", "N/A"]:
-                                s_lotes_sol.append(cand)
-                    
-                    s_lotes_sol = list(dict.fromkeys(s_lotes_sol))
-
-                    # Coleta de Seriais da Packing List
+                    # Coleta de Seriais da Packing List (Documento Validado)
                     seriais_packing = []
                     serial_matches = re.findall(r"SERIAL\s*NO\.?\s*\(([^)]+)\)", texto_packing_upper)
                     if serial_matches:
@@ -577,18 +554,12 @@ elif st.session_state.pagina_atual == "cruzamento":
                             else:
                                 seriais_packing.append(bloco.strip())
                     else:
-                        seriais_packing = re.findall(r"\b\d{6,8}\b", texto_packing_upper)
+                        seriais_packing = re.findall(r"\b\d{5,8}\b", texto_packing_upper)
+                    seriais_packing = list(dict.fromkeys(seriais_packing))
 
+                    # Validação estrita focada apenas nos números de série
                     seriais_faltantes = [s for s in seriais_packing if s not in texto_sol_upper]
-                    seriais_status_ok = len(seriais_faltantes) == 0 and len(seriais_packing) > 0
-
-                    # Validação cruzada de lotes
-                    lotes_conferem = False
-                    if len(p_lotes_packing) > 0 and len(s_lotes_sol) > 0:
-                        lotes_conferem = any(
-                            lote_p in lote_s or lote_s in lote_p 
-                            for lote_p in p_lotes_packing for lote_s in s_lotes_sol
-                        )
+                    seriais_status_ok = len(seriais_faltantes) == 0 and len(seriais_packing) > 0 and len(seriais_packing) == len(seriais_sol)
 
                     # --- COMPARAÇÃO ESTRITA ---
                     dados_validacao = [
@@ -635,11 +606,11 @@ elif st.session_state.pagina_atual == "cruzamento":
                             "Observação": "Quantidade total avaliada." if s_qty == p_qty else "Divergência na quantidade total."
                         },
                         {
-                            "Campo Validado": "Dados dos Produtos (Batch / Quantity / kit IDs)",
-                            "Documento Fonte": f"Lotes: {', '.join(s_lotes_sol[:3])} | Seriais: {', '.join(seriais_sol)}",
-                            "Documento Validado": f"Lotes: {', '.join(p_lotes_packing[:3])} | Seriais: {', '.join(seriais_packing)}",
-                            "Status": "✅ Conforme" if s_qty == p_qty and seriais_status_ok and lotes_conferem else "❌ Divergência",
-                            "Observação": "Lotes e seriais conferem." if (seriais_status_ok and lotes_conferem) else "Divergência crítica de lotes ou seriais entre os documentos."
+                            "Campo Validado": "Validação de Seriais dos Produtos",
+                            "Documento Fonte": f"Seriais: {', '.join(seriais_sol)}",
+                            "Documento Validado": f"Seriais: {', '.join(seriais_packing)}",
+                            "Status": "✅ Conforme" if s_qty == p_qty and seriais_status_ok else "❌ Divergência",
+                            "Observação": "Números de série conferem integralmente." if (s_qty == p_qty and seriais_status_ok) else "Divergência ou divergência nos números de série entre os documentos."
                         }
                     ]
 
