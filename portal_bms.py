@@ -503,23 +503,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                     seriais_sol = list(dict.fromkeys(seriais_sol))
                     s_qty = str(len(seriais_sol)) if len(seriais_sol) > 0 else "NÃO CONSTA"
 
-                    # --- EXTRAÇÃO PRECISA DE LOTES NEWSE (SOLICITAÇÃO) ---
-                    s_lotes_sol = []
-                    # Busca específica por lotes no padrão BMS (letras seguidas de 4 números, ex: ADC4491)
-                    matches_lote_padrao = re.findall(r'\b([A-Z]{3}\d{4})\b', texto_sol_upper)
-                    if matches_lote_padrao:
-                        s_lotes_sol = [l for l in matches_lote_padrao if l not in ["NA", "N/A"]]
-                    
-                    if not s_lotes_sol:
-                        # Fallback buscando pelo termo exato na tabela do NEWSE
-                        tokens_sol = re.findall(r'\b([A-Z0-9]+)\b', texto_sol_upper)
-                        for t in tokens_sol:
-                            if any(c.isalpha() for c in t) and any(c.isdigit() for c in t) and 4 <= len(t) <= 8:
-                                if not t.startswith("CA") and not t.startswith("TE") and not t.startswith("11") and not t.startswith("80"):
-                                    s_lotes_sol.append(t)
-                                    
-                    s_lotes_sol = list(dict.fromkeys(s_lotes_sol))
-
                     # --- EXTRAÇÃO DOCUMENTO VALIDADO (PACKING LIST) ---
                     p_prot_match = re.search(r"PROTOCOL NUMBER\s*[:\s]*([A-Z0-9\-\/]+)", texto_packing_upper)
                     if p_prot_match:
@@ -558,10 +541,27 @@ elif st.session_state.pagina_atual == "cruzamento":
                     if match_batch:
                         p_lotes_packing.append(match_batch.group(1))
                     else:
-                        b_matches = re.findall(r'\b([A-Z]{3}\d{4})\b', texto_packing_upper)
+                        b_matches = re.findall(r'\b([A-Z]{2,4}\d{3,6})\b', texto_packing_upper)
                         if b_matches:
-                            p_lotes_packing.extend(b_matches)
+                            p_lotes_packing.extend([b for b in b_matches if b not in ["NA", "N/A"]])
                     p_lotes_packing = list(dict.fromkeys(p_lotes_packing))
+
+                    # --- EXTRAÇÃO DE LOTES NEWSE (SOLICITAÇÃO) CONFRONTADO COM O LOTE DA PACKING ---
+                    s_lotes_sol = []
+                    # Se encontrarmos exatamente o mesmo lote da packing list dentro do texto do newse, validamos e capturamos ele diretamente.
+                    for lote_pack in p_lotes_packing:
+                        if lote_pack in texto_sol_upper:
+                            s_lotes_sol.append(lote_pack)
+                    
+                    if not s_lotes_sol:
+                        # Fallback seguro buscando padrões alfanuméricos válidos de lote (ex: 3 letras + 4 dígitos)
+                        candidatos_lote = re.findall(r'\b([A-Z]{2,4}\d{3,6})\b', texto_sol_upper)
+                        unidades_invalidas = {"IU", "ML", "MG", "PFS", "IPFS", "CA056", "TE1663", "SENSITECH", "TAGALERT", "BINOCRIT"}
+                        for cand in candidatos_lote:
+                            if not any(ui in cand for ui in unidades_invalidas) and cand not in ["NA", "N/A"]:
+                                s_lotes_sol.append(cand)
+                    
+                    s_lotes_sol = list(dict.fromkeys(s_lotes_sol))
 
                     # Coleta de Seriais da Packing List
                     seriais_packing = []
@@ -585,9 +585,9 @@ elif st.session_state.pagina_atual == "cruzamento":
                     # Validação cruzada de lotes
                     lotes_conferem = False
                     if len(p_lotes_packing) > 0 and len(s_lotes_sol) > 0:
-                        lotes_conferem = all(
-                            any(lote_p.replace(".", "") in lote_s.replace(".", "") for lote_s in s_lotes_sol)
-                            for lote_p in p_lotes_packing
+                        lotes_conferem = any(
+                            lote_p in lote_s or lote_s in lote_p 
+                            for lote_p in p_lotes_packing for lote_s in s_lotes_sol
                         )
 
                     # --- COMPARAÇÃO ESTRITA ---
