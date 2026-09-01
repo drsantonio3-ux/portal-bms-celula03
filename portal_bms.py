@@ -500,15 +500,17 @@ elif st.session_state.pagina_atual == "cruzamento":
                     seriais_sol = [s for s in seriais_sol_brutos if s not in [s_ship, s_addr, "11899681", "88630413"] and not s.startswith("906")]
                     s_qty = str(len(seriais_sol)) if len(seriais_sol) > 0 else "NÃO CONSTA"
 
-                    # Extração Contextual de Lotes (NEWSE) - Procura antes da data DD/MM/YYYY
-                    palavras_proibidas = {"QUANTITY", "VALIDADE", "LOTE", "MATERIAL", "BATCH", "CLIMATIZADA", "CAMARA", "AREA", "PORTAL", "ENDERECO", "CENTRO", "SOCIAL", "TELEFONE", "PACKING", "VERBO", "DIVINO", "RUA", "CHAC", "ANTONIO", "SAO", "PAULO", "BRASIL", "NA", "N/A", "NULL"}
+                   # Extração Reforçada de Lotes (NEWSE) - Focado no padrão de lote (ex: ADC4491)
+                    palavras_proibidas = {"QUANTITY", "VALIDADE", "LOTE", "MATERIAL", "BATCH", "CLIMATIZADA", "CAMARA", "AREA", "PORTAL", "ENDERECO", "CENTRO", "SOCIAL", "TELEFONE", "PACKING", "VERBO", "DIVINO", "RUA", "CHAC", "ANTONIO", "SAO", "PAULO", "BRASIL", "NA", "N/A", "NULL", "33203005", "30000IU"}
                     
-                    lotes_sol_contexto = re.findall(r'\b([A-Z0-9]{4,15})\s+\d{2}/\d{2}/\d{4}\b', texto_sol_limpo)
-                    s_lotes_sol = [l for l in lotes_sol_contexto if l not in palavras_proibidas]
+                    # Procura por lotes no formato típico (letras seguidas de números, com 4 a 10 caracteres)
+                    lotes_candidatos = re.findall(r'\b([A-Z]{2,4}\d{3,6})\b', texto_sol_upper)
+                    s_lotes_sol = [l for l in lotes_candidatos if l not in palavras_proibidas]
                     
-                    if not s_lotes_sol: # Fallback caso fuja do padrão
-                        padrao_lote = re.compile(r'\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9\.]+\b')
-                        s_lotes_sol = [l for l in padrao_lote.findall(texto_sol_upper) if l not in palavras_proibidas and len(l) >= 4 and not l.startswith("CA") and not l.startswith("TE") and "SHIP" not in l and "PROTOCOL" not in l]
+                    if not s_lotes_sol:
+                        lotes_sol_contexto = re.findall(r'\b([A-Z0-9]{4,15})\s+\d{2}/\d{2}/\d{4}\b', texto_sol_limpo)
+                        s_lotes_sol = [l for l in lotes_sol_contexto if l not in palavras_proibidas]
+                        
                     s_lotes_sol = list(dict.fromkeys(s_lotes_sol))
 
                     # --- EXTRAÇÃO DOCUMENTO VALIDADO (PACKING LIST) ---
