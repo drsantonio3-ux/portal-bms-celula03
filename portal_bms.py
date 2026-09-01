@@ -500,17 +500,24 @@ elif st.session_state.pagina_atual == "cruzamento":
                     seriais_sol = [s for s in seriais_sol_brutos if s not in [s_ship, s_addr, "11899681", "88630413"] and not s.startswith("906")]
                     s_qty = str(len(seriais_sol)) if len(seriais_sol) > 0 else "NÃO CONSTA"
 
-                   # Extração Reforçada de Lotes (NEWSE) - Focado no padrão de lote (ex: ADC4491)
-                    palavras_proibidas = {"QUANTITY", "VALIDADE", "LOTE", "MATERIAL", "BATCH", "CLIMATIZADA", "CAMARA", "AREA", "PORTAL", "ENDERECO", "CENTRO", "SOCIAL", "TELEFONE", "PACKING", "VERBO", "DIVINO", "RUA", "CHAC", "ANTONIO", "SAO", "PAULO", "BRASIL", "NA", "N/A", "NULL", "33203005", "30000IU"}
+                    # --- EXTRAÇÃO PRECISA DE LOTES (NEWSE / SOLICITAÇÃO - ÂNCORA 'LOTE') ---
+                    palavras_proibidas = {"QUANTITY", "VALIDADE", "LOTE", "MATERIAL", "BATCH", "CLIMATIZADA", "CAMARA", "AREA", "PORTAL", "ENDERECO", "CENTRO", "SOCIAL", "TELEFONE", "PACKING", "VERBO", "DIVINO", "RUA", "CHAC", "ANTONIO", "SAO", "PAULO", "BRASIL", "NA", "N/A", "NULL"}
                     
-                    # Procura por lotes no formato típico (letras seguidas de números, com 4 a 10 caracteres)
-                    lotes_candidatos = re.findall(r'\b([A-Z]{2,4}\d{3,6})\b', texto_sol_upper)
-                    s_lotes_sol = [l for l in lotes_candidatos if l not in palavras_proibidas]
-                    
+                    s_lotes_sol = []
+                    matches_lote_newse = re.finditer(r'\bLOTE\b\s*[:\-]?\s*([A-Z0-9\-\.]+)', texto_sol_upper)
+                    for m in matches_lote_newse:
+                        candidato = m.group(1).strip()
+                        if candidato not in palavras_proibidas and len(candidato) >= 3:
+                            s_lotes_sol.append(candidato)
+                            
                     if not s_lotes_sol:
-                        lotes_sol_contexto = re.findall(r'\b([A-Z0-9]{4,15})\s+\d{2}/\d{2}/\d{4}\b', texto_sol_limpo)
-                        s_lotes_sol = [l for l in lotes_sol_contexto if l not in palavras_proibidas]
-                        
+                        tokens = texto_sol_upper.split()
+                        for idx, token in enumerate(tokens):
+                            if token == "LOTE" and idx + 1 < len(tokens):
+                                proximo = tokens[idx + 1].strip()
+                                if proximo not in palavras_proibidas and len(proximo) >= 3:
+                                    s_lotes_sol.append(proximo)
+                                    
                     s_lotes_sol = list(dict.fromkeys(s_lotes_sol))
 
                     # --- EXTRAÇÃO DOCUMENTO VALIDADO (PACKING LIST) ---
@@ -545,13 +552,22 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_qty_matches = re.findall(r"(\d+)\s*EA", texto_packing_upper)
                     p_qty = str(sum([int(q) for q in p_qty_matches])) if p_qty_matches else "NÃO CONSTA"
 
-                    # Extração Contextual de Lotes (Packing List) - Procura antes de "X EA"
-                    lotes_pack_contexto = re.findall(r'\b([A-Z0-9]{4,15})\s+\d+\s+EA\b', texto_packing_limpo)
-                    p_lotes_packing = [l for l in lotes_pack_contexto if l not in palavras_proibidas]
-                    
-                    if not p_lotes_packing: # Fallback
-                        padrao_lote = re.compile(r'\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9\.]+\b')
-                        p_lotes_packing = [l for l in padrao_lote.findall(texto_packing_upper) if l not in palavras_proibidas and len(l) >= 4 and not l.startswith("CA") and not l.startswith("TE") and "SHIP" not in l and "PROTOCOL" not in l]
+                    # --- EXTRAÇÃO DE LOTES DA PACKING LIST (ANCORADO NA PALAVRA BATCH) ---
+                    p_lotes_packing = []
+                    matches_lote_pack = re.finditer(r'\bBATCH\b\s*[:\-]?\s*([A-Z0-9\-\.]+)', texto_packing_upper)
+                    for m in matches_lote_pack:
+                        candidato = m.group(1).strip()
+                        if candidato not in palavras_proibidas and len(candidato) >= 3:
+                            p_lotes_packing.append(candidato)
+                            
+                    if not p_lotes_packing:
+                        tokens_p = texto_packing_upper.split()
+                        for idx, token in enumerate(tokens_p):
+                            if token == "BATCH" and idx + 1 < len(tokens_p):
+                                proximo = tokens_p[idx + 1].strip()
+                                if proximo not in palavras_proibidas and len(proximo) >= 3:
+                                    p_lotes_packing.append(proximo)
+                                    
                     p_lotes_packing = list(dict.fromkeys(p_lotes_packing))
 
                     # Coleta de Seriais
