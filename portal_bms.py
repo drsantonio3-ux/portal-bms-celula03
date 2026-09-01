@@ -495,7 +495,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                         if medico in texto_sol_upper:
                             s_pi = medico; break
 
-                    # Extração rigorosa de seriais/peças do NEWSE (evita telefones e CEPs, focando em kits de 7 dígitos)
+                    # Extração rigorosa de seriais/peças do NEWSE
                     seriais_sol_brutos = re.findall(r'\b(11\d{5})\b', texto_sol_upper)
                     if not seriais_sol_brutos:
                         seriais_sol_brutos = re.findall(r'\b(\d{7})\b', texto_sol_upper)
@@ -503,15 +503,19 @@ elif st.session_state.pagina_atual == "cruzamento":
                     seriais_sol = list(dict.fromkeys(seriais_sol))
                     s_qty = str(len(seriais_sol)) if len(seriais_sol) > 0 else "NÃO CONSTA"
 
-                    # --- EXTRAÇÃO DE LOTES NEWSE (ANCORADO EM 'LOTE' COM LIMPEZA ROBUSTA) ---
+                    # --- EXTRAÇÃO RIGOROSA DE LOTES NEWSE (SOLICITAÇÃO) ---
                     s_lotes_sol = []
-                    match_lote_newse = re.search(r'\bLOTE\b\s*[:\-]?\s*([A-Z0-9]+)', texto_sol_limpo)
-                    if match_lote_newse:
-                        s_lotes_sol.append(match_lote_newse.group(1))
-                    else:
-                        l_matches = re.findall(r'\b([A-Z]{3}\d{4})\b', texto_sol_upper)
-                        if l_matches:
-                            s_lotes_sol.extend(l_matches)
+                    # Procura diretamente pelo padrão de lote da BMS (ex: ADC4491) próximo a datas de validade ou nomes de produtos
+                    matches_lote_padrao = re.findall(r'\b([A-Z]{3}\d{4})\b', texto_sol_upper)
+                    if matches_lote_padrao:
+                        s_lotes_sol = [l for l in matches_lote_padrao if l not in ["NA", "N/A"]]
+                    
+                    if not s_lotes_sol:
+                        # Fallback buscando após a palavra LOTE na tabela
+                        match_lote_newse = re.search(r'\bLOTE\b\s*([A-Z0-9]+)', texto_sol_limpo)
+                        if match_lote_newse:
+                            s_lotes_sol.append(match_lote_newse.group(1))
+                            
                     s_lotes_sol = list(dict.fromkeys(s_lotes_sol))
 
                     # --- EXTRAÇÃO DOCUMENTO VALIDADO (PACKING LIST) ---
@@ -548,7 +552,7 @@ elif st.session_state.pagina_atual == "cruzamento":
 
                     # --- EXTRAÇÃO DE LOTES DA PACKING LIST (ANCORADO NA PALAVRA BATCH) ---
                     p_lotes_packing = []
-                    match_batch = re.search(r'\bBATCH\b\s*[:\-]?\s*([A-Z0-9]+)', texto_packing_limpo)
+                    match_batch = re.search(r'\bBATCH\b\s*([A-Z0-9]+)', texto_packing_limpo)
                     if match_batch:
                         p_lotes_packing.append(match_batch.group(1))
                     else:
