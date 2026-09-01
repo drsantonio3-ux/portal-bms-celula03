@@ -503,19 +503,15 @@ elif st.session_state.pagina_atual == "cruzamento":
                     seriais_sol = list(dict.fromkeys(seriais_sol))
                     s_qty = str(len(seriais_sol)) if len(seriais_sol) > 0 else "NÃO CONSTA"
 
-                    # --- EXTRAÇÃO RIGOROSA DE LOTES NEWSE (SOLICITAÇÃO) ---
+                    # --- EXTRAÇÃO ROBUSTA DE LOTES NEWSE (SOLICITAÇÃO) ---
+                    tokens_sol = re.findall(r'\b([A-Z0-9]+)\b', texto_sol_upper)
                     s_lotes_sol = []
-                    # Procura diretamente pelo padrão de lote da BMS (ex: ADC4491) próximo a datas de validade ou nomes de produtos
-                    matches_lote_padrao = re.findall(r'\b([A-Z]{3}\d{4})\b', texto_sol_upper)
-                    if matches_lote_padrao:
-                        s_lotes_sol = [l for l in matches_lote_padrao if l not in ["NA", "N/A"]]
-                    
-                    if not s_lotes_sol:
-                        # Fallback buscando após a palavra LOTE na tabela
-                        match_lote_newse = re.search(r'\bLOTE\b\s*([A-Z0-9]+)', texto_sol_limpo)
-                        if match_lote_newse:
-                            s_lotes_sol.append(match_lote_newse.group(1))
-                            
+                    for t in tokens_sol:
+                        has_letter = any(c.isalpha() for c in t)
+                        has_digit = any(c.isdigit() for c in t)
+                        if has_letter and has_digit and 4 <= len(t) <= 10:
+                            if not t.startswith("CA") and not t.startswith("TE") and not t.startswith("11") and not t.startswith("80"):
+                                s_lotes_sol.append(t)
                     s_lotes_sol = list(dict.fromkeys(s_lotes_sol))
 
                     # --- EXTRAÇÃO DOCUMENTO VALIDADO (PACKING LIST) ---
@@ -623,7 +619,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                             "Documento Fonte": s_pi,
                             "Documento Validado": p_pi,
                             "Status": "✅ Conforme" if s_pi != "NÃO CONSTA" and s_pi == p_pi else "❌ Divergência",
-                            "Observação": "Nome do investigador comparado." if s_pi == p_pi else "Divergência no nome do investigador."
+                            "Observação": "Nome do investigador comparado." if s_pi == p_pi else "Divergência na nome do investigador."
                         },
                         {
                             "Campo Validado": "Total quantity in shipment",
