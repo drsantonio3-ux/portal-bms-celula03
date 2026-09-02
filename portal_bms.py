@@ -7,6 +7,8 @@ import re
 import urllib.request
 import json
 import time
+import os
+import unicodedata
 
 
 def extrair_texto_pdf(leitor, separador=""):
@@ -14,6 +16,13 @@ def extrair_texto_pdf(leitor, separador=""):
     Ignora páginas sem texto extraível (ex: PDFs escaneados/imagem),
     o que evita que o app quebre com um upload inesperado."""
     return separador.join([(pagina.extract_text() or "") for pagina in leitor.pages])
+
+
+def remover_acentos(texto):
+    """Remove acentos (ex: 'FUNDAÇÃO' -> 'FUNDACAO') para comparar textos
+    vindos de sistemas diferentes que nem sempre extraem acentuação da
+    mesma forma."""
+    return "".join(c for c in unicodedata.normalize("NFD", texto) if unicodedata.category(c) != "Mn")
 
 
 def detectar_faixas_tagalert(texto_upper):
@@ -37,6 +46,137 @@ def detectar_faixas_tagalert(texto_upper):
         else:
             tem_amb = True
     return tem_ref, tem_amb
+
+
+# --- Reconhecimento de medicações citotóxicas ---
+# Lista usada tanto para a regra de "caixa separada / logger extra" quanto
+# para decidir qual ficha de segurança anexar. Usa lookahead negativo em
+# PACLITAXEL para não confundir com PACLITAXEL NAB / PACLITAXELNAB
+# (nab-paclitaxel/Abraxane, com ou sem espaço no PDF), que é uma
+# formulação diferente e não entra nessa regra.
+CITOTOXICOS_REGEX = re.compile(r"BORTEZOMIB|SPRYCEL|DASATINIB|PACLITAXEL(?!\s*NAB)|TAXOL|CYCLOPHOSPHAMIDE|CICLOFOSFAMIDA")
+# Além da lista de nomes conhecidos acima, muitas Packing Lists já trazem a
+# palavra "Cytotoxic" (ou "Citotóxico") escrita no próprio campo de Storage
+# do item — inclusive para medicações que não estão na nossa lista de nomes
+# (ex: Cisplatin, Pemetrexed, Carboplatin). Esse sinal do próprio documento
+# é o mais confiável para decidir "esse item específico precisa de caixa
+# separada", então ele é combinado com a lista de nomes.
+CITOTOXICO_TEXTO_REGEX = re.compile(r"CYTOTOXIC|CITOT[ÓO]XIC")
+
+# Linha "Material  Batch   Quantidade EA  Data" que aparece uma vez para
+# cada item de uma Packing List (ex: "8 EA 30-JUN-2027"). É o ponto mais
+# estável do layout para dividir o texto em blocos, um por item.
+ITEM_ANCHOR_REGEX = re.compile(r"\d+\s*EA\s+\d{1,2}-[A-Z]{3}-\d{4}")
+
+
+def normalizar_faixa_temperatura(bloco_upper):
+    """Extrai e normaliza a faixa/limite de temperatura de UM item (bloco de
+    texto entre o início desse item e o início do próximo), para poder
+    comparar se dois itens compartilham a mesma faixa (e por isso podem
+    dividir a mesma caixa/logger)."""
+    m = re.search(r"TEMP\s+NOT\s+EXCEED\s+(\d+(?:[.,]\d+)?)\s*C", bloco_upper)
+    if m:
+        return f"NE{m.group(1).replace(',', '.')}"
+    m = re.search(r"TEMP\s*(-?\d+(?:[.,]\d+)?)\s*-\s*(\d+(?:[.,]\d+)?)\s*C", bloco_upper)
+    if m:
+        minv = m.group(1).replace(',', '.')
+        maxv = m.group(2).replace(',', '.')
+        return f"{minv}-{maxv}"
+    return "FAIXA_NAO_IDENTIFICADA"
+
+
+def faixa_e_refrigerada(faixa_normalizada):
+    """True = refrigerado (limite superior <= 8°C), False = ambiente,
+    None = não foi possível determinar (tratado como ambiente por segurança
+    operacional, já que é a faixa mais comum)."""
+    try:
+        if faixa_normalizada.startswith("NE"):
+            return float(faixa_normalizada[2:]) <= 8
+        if "-" in faixa_normalizada:
+            return float(faixa_normalizada.split("-", 1)[1]) <= 8
+    except ValueError:
+        pass
+    return None
+
+
+def item_e_citotoxico(bloco_upper):
+    return bool(CITOTOXICO_TEXTO_REGEX.search(bloco_upper)) or bool(CITOTOXICOS_REGEX.search(bloco_upper))
+
+
+def analisar_itens_packing(texto_upper):
+    """Divide o texto do Packing List em blocos por item (usando a linha
+    Material/Batch/Quantidade/Data como âncora) e extrai, para cada item,
+    qual dispositivo ele precisa (TempTale ou Tag Alert), se é uma
+    medicação citotóxica e a faixa de temperatura normalizada.
+
+    Isso substitui a lógica antiga, que só enxergava "o documento inteiro
+    tem a palavra X" e por isso nunca conseguia contar corretamente quantos
+    loggers eram realmente necessários quando havia vários itens com faixas
+    de temperatura diferentes, ou vários itens citotóxicos que precisam
+    cada um da sua própria caixa separada."""
+    posicoes = list(ITEM_ANCHOR_REGEX.finditer(texto_upper))
+    itens = []
+    for i, m in enumerate(posicoes):
+        fim_bloco = posicoes[i + 1].start() if i + 1 < len(posicoes) else len(texto_upper)
+        bloco = texto_upper[m.end():fim_bloco]
+
+        dispositivo = None
+        if "TEMPTALE" in bloco or "TT4" in bloco:
+            dispositivo = "TEMPTALE"
+        elif "TAGALERT" in bloco or "TAG ALERT" in bloco:
+            dispositivo = "TAGALERT"
+        if dispositivo is None:
+            continue  # item sem exigência de logger (ex: linha de confirmação)
+
+        itens.append({
+            "dispositivo": dispositivo,
+            "citotoxico": item_e_citotoxico(bloco),
+            "faixa": normalizar_faixa_temperatura(bloco),
+        })
+    return itens
+
+
+def agrupar_loggers_necessarios(itens):
+    """A partir da lista de itens (ver analisar_itens_packing), decide quantos
+    loggers de cada tipo são realmente necessários:
+
+    - Itens do MESMO dispositivo, com a MESMA faixa de temperatura e o MESMO
+      status de citotóxico podem compartilhar uma caixa e, portanto, 1 logger.
+    - Itens citotóxicos NUNCA dividem caixa/logger com itens não citotóxicos
+      (regra de caixa separada), mesmo que a faixa de temperatura seja igual.
+
+    Retorna (qtd_temptale, qtd_tagalert_ambiente, qtd_tagalert_refrigerado,
+    tem_algum_citotoxico)."""
+    grupos_temptale = set()
+    grupos_tagalert = set()  # chave: (citotoxico, "AMB"/"REF")
+    tem_citotoxico = False
+
+    for item in itens:
+        if item["citotoxico"]:
+            tem_citotoxico = True
+        if item["dispositivo"] == "TEMPTALE":
+            grupos_temptale.add((item["citotoxico"], item["faixa"]))
+        else:
+            refrigerado = faixa_e_refrigerada(item["faixa"])
+            categoria = "REF" if refrigerado else "AMB"
+            grupos_tagalert.add((item["citotoxico"], categoria))
+
+    qtd_tagalert_amb = sum(1 for _, cat in grupos_tagalert if cat == "AMB")
+    qtd_tagalert_ref = sum(1 for _, cat in grupos_tagalert if cat == "REF")
+    return len(grupos_temptale), qtd_tagalert_amb, qtd_tagalert_ref, tem_citotoxico
+
+
+# --- Fichas de segurança obrigatórias para medicações citotóxicas ---
+# Cada entrada: (regex de reconhecimento, caminho do PDF, rótulo amigável).
+# Só existe ficha própria para essas 4 medicações — outras que o documento
+# marque como "Cytotoxic" (ex: Cisplatin, Carboplatin) entram na regra de
+# caixa separada/logger, mas não têm ficha própria cadastrada aqui.
+FICHAS_SEGURANCA = [
+    (re.compile(r"BORTEZOMIB"), "fichas_seguranca/ficha_bortezomib.pdf", "Bortezomib (Velcade)"),
+    (re.compile(r"SPRYCEL|DASATINIB"), "fichas_seguranca/ficha_sprycel_dasatinib.pdf", "Sprycel / Dasatinib"),
+    (re.compile(r"PACLITAXEL(?!\s*NAB)|TAXOL"), "fichas_seguranca/ficha_taxol_paclitaxel.pdf", "Taxol / Paclitaxel"),
+    (re.compile(r"CYCLOPHOSPHAMIDE|CICLOFOSFAMIDA"), "fichas_seguranca/ficha_ciclofosfamida.pdf", "Cyclophosphamide / Ciclofosfamida"),
+]
 
 
 # --- CONFIGURAÇÕES DA PÁGINA (SaaS Logístico - Wide) ---
@@ -215,6 +355,8 @@ if "baixas_registradas" not in st.session_state:
     st.session_state.baixas_registradas = {}  # arquivo_id -> {delivery_number, itens, data_uso}
 if "alocacao_pendente" not in st.session_state:
     st.session_state.alocacao_pendente = False
+if "packing_uploader_key" not in st.session_state:
+    st.session_state.packing_uploader_key = 0
 
 # --- CARREGAR DADOS E ESTOQUE ---
 @st.cache_data(ttl=1)
@@ -357,7 +499,12 @@ if st.session_state.pagina_atual == "automacao":
         return data_atual
 
     col_pdf, col_data = st.columns([3, 1])
-    with col_pdf: arquivo_pdf = st.file_uploader("📥 Arraste o PDF da Packing List aqui", type=["pdf"])
+    with col_pdf:
+        arquivo_pdf = st.file_uploader(
+            "📥 Arraste o PDF da Packing List aqui",
+            type=["pdf"],
+            key=f"packing_{st.session_state.packing_uploader_key}",
+        )
     with col_data: data_recebimento = st.date_input("Data de Recebimento", datetime.today())
 
     if arquivo_pdf is not None:
@@ -378,17 +525,33 @@ if st.session_state.pagina_atual == "automacao":
                 if estudo_encontrado in str(row['Estudo']).upper():
                     te_resultado = str(row['TE']).strip(); break
 
-        tem_temptale = "TEMPTALE" in texto_upper or "TT4" in texto_upper
-        tem_tagalert_ref, tem_tagalert_amb = detectar_faixas_tagalert(texto_upper)
-        # Salvaguarda: se por algum motivo nenhuma faixa numérica foi reconhecida
-        # mas a palavra TAGALERT está no documento, trata como Ambiente por padrão
-        # (evita que um Tag Alert "passe em branco" por causa de um formato de
-        # temperatura ainda não previsto no texto do Packing List).
-        if "TAGALERT" in texto_upper and not tem_tagalert_ref and not tem_tagalert_amb:
-            tem_tagalert_amb = True
+        # --- Análise por item (quantos loggers de cada tipo são realmente necessários) ---
+        # Divide a Packing List em blocos, um por item, e agrupa por (dispositivo,
+        # citotóxico, faixa de temperatura) — ver analisar_itens_packing/
+        # agrupar_loggers_necessarios no topo do arquivo. Isso substitui a lógica
+        # antiga que só olhava "o documento tem essa palavra em algum lugar" e por
+        # isso não conseguia contar corretamente quantos loggers eram necessários
+        # quando havia mais de um item com faixas de temperatura diferentes.
+        itens_detectados = analisar_itens_packing(texto_upper)
 
-        CITOTOXICOS = ["BORTEZOMIB", "SPRYCEL", "DASATINIB", "PACLITAXEL", "TAXOL", "CYCLOPHOSPHAMIDE", "CICLOFOSFAMIDA"]
-        tem_citotoxico = any(c in texto_upper for c in CITOTOXICOS)
+        if itens_detectados:
+            qtd_temptale, qtd_tagalert_amb, qtd_tagalert_ref, tem_citotoxico = agrupar_loggers_necessarios(itens_detectados)
+        else:
+            # Formato de documento não reconhecido pelo separador de itens —
+            # usa o modelo antigo (menos preciso, mas já validado) como rede
+            # de segurança em vez de não alocar nenhum logger.
+            tem_temptale_doc = "TEMPTALE" in texto_upper or "TT4" in texto_upper
+            tem_tagalert_ref_doc, tem_tagalert_amb_doc = detectar_faixas_tagalert(texto_upper)
+            if "TAGALERT" in texto_upper and not tem_tagalert_ref_doc and not tem_tagalert_amb_doc:
+                tem_tagalert_amb_doc = True
+            tem_citotoxico = bool(CITOTOXICOS_REGEX.search(texto_upper)) or bool(CITOTOXICO_TEXTO_REGEX.search(texto_upper))
+            qtd_temptale = (1 if tem_temptale_doc else 0) + (1 if tem_citotoxico and tem_temptale_doc else 0)
+            qtd_tagalert_amb = 1 if tem_tagalert_amb_doc else 0
+            qtd_tagalert_ref = 1 if tem_tagalert_ref_doc else 0
+
+        tem_temptale = qtd_temptale > 0
+        tem_tagalert_amb = qtd_tagalert_amb > 0
+        tem_tagalert_ref = qtd_tagalert_ref > 0
 
         cidade_destino = "NÃO IDENTIFICADA"
         linhas = texto_upper.split('\n')
@@ -450,18 +613,56 @@ if st.session_state.pagina_atual == "automacao":
                     else:
                         st.warning(f"⚠️ **{label}**: Sem saldo disponível no estoque!")
 
-                if tem_temptale: allocate_logger("TEMPTALE", "TempTale Ambiente")
-                if tem_tagalert_amb: allocate_logger("TAGALERT 15-25", "Tag Alert Ambiente")
-                if tem_tagalert_ref: allocate_logger("TAGALERT 2-8", "Tag Alert Refrigerado")
+                # Aloca exatamente a quantidade de cada logger que os itens desta
+                # Packing List realmente precisam (ver análise por item acima) —
+                # itens citotóxicos com faixa/dispositivo diferentes dos demais já
+                # entram como grupos separados, então não é somado nenhum "extra"
+                # à parte: o próprio agrupamento já reflete a regra de caixa
+                # separada para citotóxicos.
+                for i in range(qtd_temptale):
+                    rotulo = "TempTale Ambiente" if qtd_temptale == 1 else f"TempTale Ambiente ({i + 1}/{qtd_temptale})"
+                    allocate_logger("TEMPTALE", rotulo)
+                for i in range(qtd_tagalert_amb):
+                    rotulo = "Tag Alert Ambiente" if qtd_tagalert_amb == 1 else f"Tag Alert Ambiente ({i + 1}/{qtd_tagalert_amb})"
+                    allocate_logger("TAGALERT 15-25", rotulo)
+                for i in range(qtd_tagalert_ref):
+                    rotulo = "Tag Alert Refrigerado" if qtd_tagalert_ref == 1 else f"Tag Alert Refrigerado ({i + 1}/{qtd_tagalert_ref})"
+                    allocate_logger("TAGALERT 2-8", rotulo)
 
                 if tem_citotoxico:
                     st.markdown(
                         "<div style='font-size:12px; color:#92400e; background:#fff7ed; border:1px solid #fdba74; "
                         "border-radius:6px; padding:6px 10px; margin:6px 0;'>🧪 Medicação citotóxica identificada "
-                        "— por regra, essa carga segue em caixa separada e precisa de um TempTale adicional.</div>",
+                        "— por regra, essa carga segue em caixa separada (já refletido na quantidade de loggers acima).</div>",
                         unsafe_allow_html=True
                     )
-                    allocate_logger("TEMPTALE", "TempTale Extra (Citotóxico – Caixa Separada)")
+
+                # --- Fichas de segurança obrigatórias (citotóxicos) ---
+                fichas_encontradas = [
+                    (path, rotulo) for regex, path, rotulo in FICHAS_SEGURANCA if regex.search(texto_upper)
+                ]
+                if fichas_encontradas:
+                    st.markdown(
+                        "<div style='font-size:12px; color:#92400e; background:#fff7ed; border:1px solid #fdba74; "
+                        "border-radius:6px; padding:6px 10px; margin:6px 0;'>📎 <b>Ficha de segurança obrigatória "
+                        "no check-list</b> para a(s) medicação(ões) identificada(s) abaixo:</div>",
+                        unsafe_allow_html=True
+                    )
+                    cols_ficha = st.columns(len(fichas_encontradas))
+                    for col_ficha, (caminho_ficha, rotulo_ficha) in zip(cols_ficha, fichas_encontradas):
+                        with col_ficha:
+                            if os.path.exists(caminho_ficha):
+                                with open(caminho_ficha, "rb") as f_ficha:
+                                    st.download_button(
+                                        f"📄 Ficha — {rotulo_ficha}",
+                                        data=f_ficha.read(),
+                                        file_name=os.path.basename(caminho_ficha),
+                                        mime="application/pdf",
+                                        use_container_width=True,
+                                        key=f"ficha_{os.path.basename(caminho_ficha)}",
+                                    )
+                            else:
+                                st.warning(f"⚠️ Ficha de {rotulo_ficha} não encontrada no sistema.")
 
                 # Enquanto houver itens alocados e a baixa ainda não foi confirmada,
                 # trava a navegação para outras páginas (ver barra lateral).
@@ -546,6 +747,11 @@ if st.session_state.pagina_atual == "automacao":
                                 }
                                 st.session_state.alocacao_pendente = False
 
+                                # Troca a "key" do uploader para a próxima renderização —
+                                # isso faz o Streamlit tratá-lo como um campo novo/vazio,
+                                # limpando o PDF anexado automaticamente (sem precisar de F5).
+                                st.session_state.packing_uploader_key += 1
+
                                 st.cache_data.clear()
                                 itens_txt = ", ".join([p["label"] for p in ids_utilizados])
                                 st.success(f"✅ Baixa executada com sucesso! DEL# **{delivery_number}** usado para: {itens_txt}.")
@@ -615,7 +821,7 @@ if st.session_state.pagina_atual == "automacao":
                 "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 6.1” quando houver o envio de “DASATINIB OU SPRYCEL."
             ])
 
-        if "PACLITAXEL" in texto_upper or "TAXOL" in texto_upper:
+        if re.search(r"PACLITAXEL(?!\s*NAB)|TAXOL", texto_upper):
             paragrafos.extend([
                 "As medicações foram acondicionadas em embalagem apropriada CREDO 28L validada pelo cliente com Tag Alert ambiente conforme solicitado pelo cliente.",
                 "O formulário de requisição dos produtos comerciais, deverá ser enviado para a Instituição de destino.",
@@ -686,38 +892,54 @@ elif st.session_state.pagina_atual == "cruzamento":
                 try:
                     leitor_sol = PdfReader(arquivo_sol)
                     texto_sol = extrair_texto_pdf(leitor_sol, " ")
-                    texto_sol_upper = texto_sol.upper()
+                    # Acentos removidos: a NEWSE e o Packing List nem sempre extraem
+                    # acentuação da mesma forma (ex: "FUNDAÇÃO" vs "FUNDACAO"), então
+                    # comparar sem acento evita divergência falsa só por causa disso.
+                    texto_sol_upper = remover_acentos(texto_sol.upper())
                     texto_sol_limpo = re.sub(r'\s+', ' ', texto_sol)
 
                     leitor_packing = PdfReader(arquivo_packing)
                     texto_packing = extrair_texto_pdf(leitor_packing, " ")
-                    texto_packing_upper = texto_packing.upper()
+                    texto_packing_upper = remover_acentos(texto_packing.upper())
                     texto_packing_limpo = re.sub(r'\s+', ' ', texto_packing)
 
                     def limpar(t): return re.sub(r'\s+', ' ', str(t)).strip()
+
+                    # --- Grupos de instituições conhecidas (para o campo Centre/Depto) ---
+                    # Cada grupo tem palavras-chave que podem aparecer com nomes
+                    # diferentes na NEWSE e no Packing List (sistemas diferentes,
+                    # grafias diferentes) mas se referem à mesma instituição.
+                    # Lista pequena de propósito — o campo NÃO depende só dela:
+                    # quando nenhum grupo bate mas o CEP dos dois documentos é
+                    # idêntico, isso já é usado como confirmação (ver mais abaixo),
+                    # em vez de bloquear a remessa só por causa da grafia do nome.
+                    GRUPOS_CENTRO = [
+                        ("A. C. CAMARGO / FUNDAÇÃO ANTÔNIO PRUDENTE", ["CAMARGO", "PRUDENTE"]),
+                        ("FUNDACAO PIO XII", ["PIO XII"]),
+                        ("HOSPITAL SAO LUCAS DA PUCRS", ["SAO LUCAS"]),
+                        ("ICESP", ["ICESP", "INSTITUTO DO CANCER"]),
+                    ]
+
+                    def identificar_centro(texto):
+                        for nome_grupo, palavras in GRUPOS_CENTRO:
+                            if any(p in texto for p in palavras):
+                                return nome_grupo
+                        return "NÃO CONSTA"
 
                     # --- EXTRAÇÃO DOCUMENTO FONTE (SOLICITAÇÃO / NEWSE) ---
                     s_prot_match = re.search(r"(CA\d+-\d+)", texto_sol_upper)
                     s_prot = s_prot_match.group(1) if s_prot_match else "NÃO CONSTA"
 
-                    s_ship_match = re.search(r"(?:ORDEM|ORDER|SHIPMENT)[^\d]*(\d{8,12})", texto_sol_upper)
+                    # Na NEWSE, o campo "Número da ordem" é onde o número do Delivery
+                    # (não do Order) da BMS acaba sendo registrado — por isso o termo
+                    # em português "ORDEM" entra na busca, junto dos termos em inglês.
+                    s_ship_match = re.search(r"(?:NUMERO DA ORDEM|ORDEM|ORDER|SHIPMENT)[^\d]*(\d{8,12})", texto_sol_upper)
                     s_ship = s_ship_match.group(1) if s_ship_match else (re.search(r"\b(8\d{9})\b", texto_sol_limpo).group(1) if re.search(r"\b(8\d{9})\b", texto_sol_limpo) else "NÃO CONSTA")
 
-                    s_centre = "NÃO CONSTA"
-                    if "PRUDENTE" in texto_sol_upper or "CAMARGO" in texto_sol_upper:
-                        s_centre = "A. C. CAMARGO / FUNDAÇÃO PRUDENTE"
-                    elif "FUNDACAO PIO XII" in texto_sol_upper or "FUNDAÇÃO PIO XII" in texto_sol_upper:
-                        s_centre = "FUNDACAO PIO XII"
-                    elif "HOSPITAL SÃO LUCAS" in texto_sol_upper or "HOSPITAL SAO LUCAS" in texto_sol_upper:
-                        s_centre = "HOSPITAL SAO LUCAS DA PUCRS"
+                    s_centre = identificar_centro(texto_sol_upper)
 
                     s_cep_match = re.search(r"CEP[^\d]*(\d{5}-?\d{3})", texto_sol_upper)
                     s_addr = s_cep_match.group(1).replace("-", "") if s_cep_match else (re.search(r"\b(\d{8})\b", texto_sol_upper).group(1) if re.search(r"\b(\d{8})\b", texto_sol_upper) else "NÃO CONSTA")
-
-                    s_pi = "NÃO CONSTA"
-                    for medico in ["JAYR SCHMIDT", "FLAVIO AUGUSTO", "MARIZA SCHAAN", "ARINILDA"]:
-                        if medico in texto_sol_upper:
-                            s_pi = medico; break
 
                     # --- EXTRAÇÃO DOCUMENTO VALIDADO (PACKING LIST) ---
                     p_prot_match = re.search(r"PROTOCOL NUMBER\s*[:\s]*([A-Z0-9\-\/]+)", texto_packing_upper)
@@ -731,22 +953,29 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_ship_match = re.search(r"(?:DELIVERY NUMBER|SHIPMENT)\s*[:\s]*(\d{8,12})", texto_packing_upper)
                     p_ship = p_ship_match.group(1) if p_ship_match else "NÃO CONSTA"
 
-                    p_centre = "NÃO CONSTA"
                     p_shipto_bloco = texto_packing_upper.split("SHIP TO")[-1] if "SHIP TO" in texto_packing_upper else texto_packing_upper
-                    if "CAMARGO" in p_shipto_bloco or "PRUDENTE" in p_shipto_bloco:
-                        p_centre = "A. C. CAMARGO / FUNDAÇÃO PRUDENTE"
-                    elif "FUNDAÇÃO PIO XII" in p_shipto_bloco or "FUNDACAO PIO XII" in p_shipto_bloco:
-                        p_centre = "FUNDACAO PIO XII"
-                    elif "HOSPITAL SAO LUCAS" in p_shipto_bloco or "HOSPITAL SÃO LUCAS" in p_shipto_bloco:
-                        p_centre = "HOSPITAL SAO LUCAS DA PUCRS"
+                    p_centre = identificar_centro(p_shipto_bloco)
 
                     p_cep_match = re.search(r"(\d{5}-?\d{3})", p_shipto_bloco)
                     p_addr = p_cep_match.group(1).replace("-", "") if p_cep_match else "NÃO CONSTA"
 
-                    p_pi = "NÃO CONSTA"
-                    for medico in ["JAYR SCHMIDT", "FLAVIO AUGUSTO", "MARIZA SCHAAN", "ARINILDA"]:
-                        if medico in p_shipto_bloco or medico in texto_packing_upper:
-                            p_pi = medico; break
+                    # --- Investigator Name ---
+                    # O Packing List tem um formato limpo e consistente ("Dr(a).
+                    # Fulano de Tal" seguido de "Tel:"), muito mais confiável do que
+                    # tentar reconhecer o nome dentro do layout da NEWSE (que varia
+                    # e às vezes reordena os campos). Por isso o nome é extraído do
+                    # Packing List e depois procurado dentro do texto da NEWSE — em
+                    # vez de uma lista fixa de nomes conhecidos, que travava qualquer
+                    # investigador novo com uma falsa divergência.
+                    p_pi_match = re.search(r"DR\.?A?\.?\s+([A-Z][A-Z\s]+?)\s*TEL\s*:", texto_packing_upper)
+                    p_pi = limpar(p_pi_match.group(1)) if p_pi_match else "NÃO CONSTA"
+
+                    if p_pi != "NÃO CONSTA" and p_pi in texto_sol_upper:
+                        s_pi = p_pi
+                    elif p_pi != "NÃO CONSTA":
+                        s_pi = "NÃO ENCONTRADO NA NEWSE"
+                    else:
+                        s_pi = "NÃO CONSTA"
 
                     p_qty_matches = re.findall(r"(\d+)\s*EA", texto_packing_upper)
                     p_qty = str(sum([int(q) for q in p_qty_matches])) if p_qty_matches else "NÃO CONSTA"
@@ -768,15 +997,38 @@ elif st.session_state.pagina_atual == "cruzamento":
                         seriais_packing = re.findall(r"\b\d{5,8}\b", texto_packing_upper)
                     seriais_packing = list(dict.fromkeys(seriais_packing))
 
-                    # Coleta de Seriais da Solicitação confrontando diretamente com os seriais encontrados na packing list
-                    seriais_sol = [s for s in seriais_packing if s in texto_sol_upper]
-                    s_qty = str(len(seriais_sol)) if len(seriais_sol) > 0 else "NÃO CONSTA"
+                    # Coleta de Seriais da NEWSE — extraídos da própria tabela de
+                    # produtos da NEWSE (número que aparece logo antes de "AREA
+                    # CLIMATIZADA" ou "CAMARA FRIA" em cada linha), em vez de apenas
+                    # verificar se os números do Packing List aparecem em algum lugar
+                    # do texto da NEWSE. O método antigo podia dar falso positivo
+                    # (um serial coincidir com pedaço de CEP/CNPJ/telefone) e não
+                    # detectava serial que a NEWSE tivesse a mais.
+                    seriais_newse = re.findall(r"(\d{5,7})\s*(?:AREA|CAMARA)", texto_sol_upper)
+                    if not seriais_newse:
+                        # Layout de NEWSE não reconhecido — usa o método antigo como
+                        # rede de segurança em vez de não comparar nada.
+                        seriais_newse = [s for s in seriais_packing if s in texto_sol_upper]
+                    seriais_newse = list(dict.fromkeys(seriais_newse))
 
-                    # Validação estrita focada apenas nos números de série
-                    seriais_faltantes = [s for s in seriais_packing if s not in texto_sol_upper]
-                    seriais_status_ok = len(seriais_faltantes) == 0 and len(seriais_packing) > 0 and len(seriais_packing) == len(seriais_sol)
+                    seriais_faltantes_na_newse = [s for s in seriais_packing if s not in seriais_newse]
+                    seriais_a_mais_na_newse = [s for s in seriais_newse if s not in seriais_packing]
+                    seriais_status_ok = not seriais_faltantes_na_newse and not seriais_a_mais_na_newse and len(seriais_packing) > 0
+
+                    s_qty = str(len(seriais_newse)) if seriais_newse else "NÃO CONSTA"
 
                     # --- COMPARAÇÃO ESTRITA ---
+                    # Confirmação cruzada: quando o nome da instituição não bate por
+                    # grafia diferente entre os dois sistemas, mas o CEP de destino
+                    # dos dois documentos é idêntico, isso já confirma que é o mesmo
+                    # endereço/centro de destino — não faz sentido bloquear a
+                    # remessa só porque o nome foi escrito de um jeito diferente.
+                    centro_confirmado_por_cep = (
+                        s_addr != "NÃO CONSTA" and s_addr == p_addr
+                        and s_centre != p_centre
+                    )
+                    centro_ok = (s_centre != "NÃO CONSTA" and s_centre == p_centre) or centro_confirmado_por_cep
+
                     dados_validacao = [
                         {
                             "Campo Validado": "Dados de Protocolo",
@@ -796,8 +1048,12 @@ elif st.session_state.pagina_atual == "cruzamento":
                             "Campo Validado": "Centre and Department Name",
                             "Documento Fonte": s_centre,
                             "Documento Validado": p_centre,
-                            "Status": "✅ Conforme" if s_centre != "NÃO CONSTA" and s_centre == p_centre else "❌ Divergência",
-                            "Observação": "Razão social avaliada." if s_centre == p_centre else "Divergência na razão social / centro."
+                            "Status": "✅ Conforme" if centro_ok else "❌ Divergência",
+                            "Observação": (
+                                "Razão social avaliada." if (s_centre != "NÃO CONSTA" and s_centre == p_centre)
+                                else "Nome do centro escrito de forma diferente nos dois sistemas, mas confirmado pelo CEP de destino (idêntico nos dois documentos)." if centro_confirmado_por_cep
+                                else "Divergência na razão social / centro."
+                            )
                         },
                         {
                             "Campo Validado": "Depot site Address",
@@ -810,8 +1066,8 @@ elif st.session_state.pagina_atual == "cruzamento":
                             "Campo Validado": "Investigator Name",
                             "Documento Fonte": s_pi,
                             "Documento Validado": p_pi,
-                            "Status": "✅ Conforme" if s_pi != "NÃO CONSTA" and s_pi == p_pi else "❌ Divergência",
-                            "Observação": "Nome do investigador comparado." if s_pi == p_pi else "Divergência no nome do investigador."
+                            "Status": "✅ Conforme" if p_pi != "NÃO CONSTA" and s_pi == p_pi else "❌ Divergência",
+                            "Observação": "Nome do investigador comparado." if s_pi == p_pi else "Investigador do Packing List não foi encontrado no texto da NEWSE."
                         },
                         {
                             "Campo Validado": "Total quantity in shipment",
@@ -822,10 +1078,13 @@ elif st.session_state.pagina_atual == "cruzamento":
                         },
                         {
                             "Campo Validado": "Validação de Seriais dos Produtos",
-                            "Documento Fonte": f"Seriais: {', '.join(seriais_sol)}",
+                            "Documento Fonte": f"Seriais: {', '.join(seriais_newse)}",
                             "Documento Validado": f"Seriais: {', '.join(seriais_packing)}",
-                            "Status": "✅ Conforme" if s_qty == p_qty and seriais_status_ok else "❌ Divergência",
-                            "Observação": "Números de série conferem integralmente." if (s_qty == p_qty and seriais_status_ok) else "Divergência ou divergência nos números de série entre os documentos."
+                            "Status": "✅ Conforme" if seriais_status_ok else "❌ Divergência",
+                            "Observação": (
+                                "Números de série conferem integralmente." if seriais_status_ok
+                                else "Faltando na NEWSE: " + (", ".join(seriais_faltantes_na_newse) or "-") + " | A mais na NEWSE: " + (", ".join(seriais_a_mais_na_newse) or "-")
+                            )
                         }
                     ]
 
