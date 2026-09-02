@@ -520,6 +520,7 @@ with st.sidebar:
     paginas_menu = [
         ("automacao", "📦  Automação de Packing List"),
         ("cruzamento", "⚖️  Cruzamento NEWSE x PACKING"),
+        ("conferencia_agendamento", "🧾  Conferência de Agendamento"),
         ("bms_brasil", "🇧🇷  BMS Brasil - Solicitações"),
         ("email", "📧  Gerador de E-mail (GR)"),
     ]
@@ -1243,6 +1244,212 @@ elif st.session_state.pagina_atual == "cruzamento":
 
                 except Exception as e:
                     st.error(f"Erro na execução da conferência: {e}")
+
+# ==========================================
+# PÁGINA: CONFERÊNCIA DE AGENDAMENTO (Pedido x NEWSE x Agendamento x Minuta)
+# ==========================================
+# Portado do painel "Validador DRS Group - Logística" (artifact separado do
+# usuário) para dentro do Portal BMS, como uma aba própria. Mantém os mesmos
+# 3 estágios, os mesmos campos e a mesma lógica de aprovação/reprovação do
+# painel original — só a extração de texto do PDF passou a usar a função
+# extrair_texto_pdf (pypdf) já usada no resto do portal, em vez de pdfplumber,
+# para não precisar adicionar uma biblioteca nova só para esta página.
+elif st.session_state.pagina_atual == "conferencia_agendamento":
+
+    st.markdown("""
+        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #6d28d9; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">🧾 Conferência de Agendamento — Pedido, NEWSE, Agendamento e Minuta</h2>
+            <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
+                Auditoria estruturada campo a campo, em 3 etapas: <b>Pedido do Cliente x NEWSE</b>, <b>NEWSE x Agendamento</b>
+                e <b>Auditoria Final com a Minuta de Envio (SC)</b>.
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    def extrair_texto_pdf_conferencia(arquivo):
+        """Mesma extração usada no resto do portal (pypdf), mas mantendo uma
+        quebra de linha entre páginas — os regex desta página (herdados do
+        painel original) dependem de '\\n' para não vazar de uma linha para
+        a próxima (ex: capturar um endereço inteiro e parar no fim da linha)."""
+        leitor_conf = PdfReader(arquivo)
+        return extrair_texto_pdf(leitor_conf, separador="\n")
+
+    tab_conf1, tab_conf2, tab_conf3 = st.tabs([
+        "Etapa 1: Pedido x NEWSE",
+        "Etapa 2: NEWSE x Agendamento",
+        "Etapa 3: Auditoria Final (Minuta)",
+    ])
+
+    # ---------------------------------------------------------
+    # ETAPA 1: PEDIDO DO CLIENTE X NEWSE
+    # ---------------------------------------------------------
+    with tab_conf1:
+        st.markdown("#### Etapa 1: Validação de Raiz (Pedido do Cliente x NEWSE)")
+        st.caption("Confronto estruturado campo a campo entre o Pedido do Cliente e a NEWSE.")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            pedido_file = st.file_uploader("Arraste o Pedido do Cliente (PDF)", type=["pdf"], key="conf_p_etapa1")
+        with col2:
+            newse_file_1 = st.file_uploader("Arraste a NEWSE (PDF)", type=["pdf"], key="conf_n_etapa1")
+
+        if st.button("Validar Etapa 1", key="conf_btn1"):
+            if pedido_file and newse_file_1:
+                t_pedido = extrair_texto_pdf_conferencia(pedido_file)
+                t_newse = extrair_texto_pdf_conferencia(newse_file_1)
+
+                # Extração rigorosa de ordens
+                m_ordem_p = re.search(r'IWRS Shipment Number[:\s]*([0-9A-Za-z_-]+)', t_pedido, re.IGNORECASE)
+                m_ordem_n = re.search(r'Número da ordem[:\s]*([0-9A-Za-z_-]+)', t_newse, re.IGNORECASE)
+
+                ordem_p = m_ordem_p.group(1).strip() if m_ordem_p else "Não localizado"
+                ordem_n = m_ordem_n.group(1).strip() if m_ordem_n else "Não localizado"
+
+                # Validação se as ordens batem exatamente
+                ordens_compativeis = (ordem_p == ordem_n) and (ordem_p != "Não localizado")
+
+                # Extrações de outros campos principais
+                m_inv_p = re.search(r'Investigador[:\s]*([^\n]+)', t_pedido, re.IGNORECASE)
+                m_resp_p = re.search(r'Responsável pelo recebimento[:\s]*([^\n\(]+)', t_pedido, re.IGNORECASE)
+                m_end_p = re.search(r'Endereço[:\s]*([^\n]+)', t_pedido, re.IGNORECASE)
+
+                itens_etapa1 = [
+                    {"campo": "IWRS Shipment Number X Número da Ordem", "ped": ordem_p, "new": ordem_n, "ok": ordens_compativeis},
+                    {"campo": "Investigador x Médico Principal", "ped": m_inv_p.group(1).strip() if m_inv_p else "Verificar PDF", "new": "Verificado no Portal", "ok": True},
+                    {"campo": "Responsável X Pessoa Autorizada", "ped": m_resp_p.group(1).strip() if m_resp_p else "Verificar PDF", "new": "Verificado no Portal", "ok": True},
+                    {"campo": "Endereço de Destino", "ped": m_end_p.group(1).strip() if m_end_p else "Verificar PDF", "new": "Verificado no Portal", "ok": True},
+                ]
+
+                st.markdown("### 📋 Tabela de Conferência Analítica - Etapa 1")
+                aprovado_1 = True
+
+                for item in itens_etapa1:
+                    status_txt = "✅ Correto" if item["ok"] else "❌ Divergente / Faltando"
+                    if not item["ok"]:
+                        aprovado_1 = False
+
+                    c1, c2, c3, c4 = st.columns([2.5, 2, 2, 1.5])
+                    c1.write(f"**{item['campo']}**")
+                    c2.text(item["ped"])
+                    c3.text(item["new"])
+                    c4.markdown(status_txt)
+                    st.markdown("---")
+
+                # Detalhamento Visual Exigido para Dispositivos / Lotes / Quantidades
+                st.markdown("### 📦 Confronto Detalhado: Dispositivos / Produtos (Lotes, Validade e Quantidades)")
+                st.write("Abaixo está o comparativo exato extraído de cada documento para auditoria de itens:")
+
+                col_d1, col_d2 = st.columns(2)
+                with col_d1:
+                    st.info("📄 **Itens Encontrados no Pedido do Cliente (Origem):**")
+                    with st.expander("Ver blocos de itens do Pedido"):
+                        st.text(t_pedido)
+                with col_d2:
+                    st.info("📄 **Itens Encontrados na NEWSE (Portal):**")
+                    with st.expander("Ver blocos de produtos da NEWSE"):
+                        st.text(t_newse)
+
+                # Validação cruzada de itens baseada na compatibilidade das ordens e conteúdo
+                if ordens_compativeis:
+                    st.success("✅ **Dispositivos e Lotes:** As ordens coincidem e os itens estruturais do pedido foram mapeados na NEWSE.")
+                else:
+                    aprovado_1 = False
+                    st.error("❌ **Dispositivos e Lotes:** ATENÇÃO! Como o Número da Ordem e o conteúdo dos documentos são totalmente divergentes (ex: Pedido do BCRI vs. NEWSE da BMS), os produtos não correspondem.")
+                st.markdown("---")
+                if aprovado_1:
+                    st.success("🎉 **Resultado Final da Etapa 1:** APROVADO! Todos os dados essenciais e itens conferem perfeitamente.")
+                else:
+                    st.error("🚨 **Resultado Final da Etapa 1:** REPROVADO! Divergências críticas encontradas entre os documentos. Envie para correção.")
+            else:
+                st.warning("Por favor, faça o upload de ambos os arquivos.")
+
+    # ---------------------------------------------------------
+    # ETAPA 2: NEWSE X AGENDAMENTO
+    # ---------------------------------------------------------
+    with tab_conf2:
+        st.markdown("#### Etapa 2: Validação de Comunicação (NEWSE x Agendamento)")
+        st.caption("Confronto estruturado entre a NEWSE e o e-mail de Agendamento (ignorando data e horário de entrega).")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            newse_file_2 = st.file_uploader("Arraste a NEWSE (PDF)", type=["pdf"], key="conf_n_etapa2")
+        with col2:
+            agenda_file = st.file_uploader("Arraste o E-mail de Agendamento (PDF)", type=["pdf"], key="conf_a_etapa2")
+
+        if st.button("Validar Etapa 2", key="conf_btn2"):
+            if newse_file_2 and agenda_file:
+                t_newse2 = extrair_texto_pdf_conferencia(newse_file_2)
+                t_agenda = extrair_texto_pdf_conferencia(agenda_file)
+
+                itens_etapa2 = [
+                    {"campo": "Protocolo / Estudo", "new": "Extraído da NEWSE", "age": "Extraído do Agendamento", "ok": True},
+                    {"campo": "CNPJ do Centro / Destinatário", "new": "Portal OK", "age": "E-mail OK", "ok": True},
+                    {"campo": "Contatos Autorizados de Entrega", "new": "Cadastrados", "age": "Informados", "ok": True},
+                    {"campo": "Janela de Entrega (Data/Horário)", "new": "Ignorado (Regra Etapa 2)", "age": "Ignorado (Regra Etapa 2)", "ok": True},
+                ]
+
+                st.markdown("### 📋 Tabela de Conferência Analítica - Etapa 2")
+                for item in itens_etapa2:
+                    c1, c2, c3, c4 = st.columns([2.5, 2, 2, 1.5])
+                    c1.write(f"**{item['campo']}**")
+                    c2.text(item["new"])
+                    c3.text(item["age"])
+                    c4.markdown("✅ Correto")
+                    st.markdown("---")
+
+                st.success("🎉 **Resultado Final da Etapa 2:** APROVADO! O agendamento conversa perfeitamente com a NEWSE.")
+            else:
+                st.warning("Por favor, faça o upload de ambos os arquivos.")
+
+    # ---------------------------------------------------------
+    # ETAPA 3: AUDITORIA FINAL (MINUTA)
+    # ---------------------------------------------------------
+    with tab_conf3:
+        st.markdown("#### Etapa 3: Auditoria Final (Todas as Documentações + Minuta)")
+        st.caption("Auditoria cruzada final com a Minuta de Envio (SC) e regras fixas de transporte DRS.")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            f_newse_3 = st.file_uploader("NEWSE", type=["pdf"], key="conf_n_etapa3")
+        with col2:
+            f_agenda_3 = st.file_uploader("Agendamento", type=["pdf"], key="conf_a_etapa3")
+        with col3:
+            f_minuta_3 = st.file_uploader("Minuta de Envio (SC)", type=["pdf"], key="conf_m_etapa3")
+
+        if st.button("Executar Auditoria Final", key="conf_btn3"):
+            if f_newse_3 and f_agenda_3 and f_minuta_3:
+                t_minuta = extrair_texto_pdf_conferencia(f_minuta_3)
+                cnpjs_drs_validos = ["00804488000100", "00804488000290"]
+                remetente_valido = any(cnpj in t_minuta for cnpj in cnpjs_drs_validos)
+
+                itens_etapa3 = [
+                    {"campo": "Remetente DRS (CNPJ Fixo Oficial)", "ref": "00804488000100 ou 00804488000290", "min": "Encontrado e Válido" if remetente_valido else "Divergente", "ok": remetente_valido},
+                    {"campo": "Tracking Number (Título do E-mail)", "ref": "Idêntico ao Agendamento", "min": "Validado na Minuta", "ok": True},
+                    {"campo": "CNPJ e Endereço do Destinatário", "ref": "Compatível com Agendamento", "min": "Validado na Minuta", "ok": True},
+                    {"campo": "Contatos Autorizados / P.I.", "ref": "Compatível", "min": "Validado na Minuta", "ok": True},
+                    {"campo": "Transportadora", "ref": "DRS COURIER LTDA", "min": "Validado na Minuta", "ok": True},
+                ]
+
+                st.markdown("### 📋 Tabela de Conferência Analítica - Etapa 3")
+                aprovado_3 = True
+                for item in itens_etapa3:
+                    status_txt = "✅ Correto" if item["ok"] else "❌ Divergente / Faltando"
+                    if not item["ok"]:
+                        aprovado_3 = False
+
+                    c1, c2, c3, c4 = st.columns([2.5, 2, 2, 1.5])
+                    c1.write(f"**{item['campo']}**")
+                    c2.text(item["ref"])
+                    c3.text(item["min"])
+                    c4.markdown(status_txt)
+                    st.markdown("---")
+
+                if aprovado_3:
+                    st.success("🎉 **Resultado Final da Etapa 3:** TUDO CERTO com a minuta de envio! Processo liberado para o time de Expedição.")
+                else:
+                    st.error("🚨 **Resultado Final da Etapa 3:** REPROVADO! O CNPJ do remetente DRS na minuta não confere com os padrões oficiais.")
+            else:
+                st.warning("Por favor, faça o upload de todos os três documentos exigidos.")
 
 # ==========================================
 # PÁGINA: BMS BRASIL - SOLICITAÇÕES (retirada de TAG sem Packing List)
