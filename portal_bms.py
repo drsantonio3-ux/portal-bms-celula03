@@ -323,26 +323,89 @@ if not SENHA_ACESSO:
     st.stop()
 
 
-def verificar_senha():
-    def senha_inserida():
-        if st.session_state["password_input"] == SENHA_ACESSO:
-            st.session_state["password_correta"] = True
-            del st.session_state["password_input"]
-        else:
-            st.session_state["password_correta"] = False
+def tela_login(mostrar_erro):
+    """Renderiza a tela de login (fundo em degradê DRS + cartão central com
+    logo, título e o campo de senha). Tudo fica DENTRO de um único
+    st.container(), para o cartão realmente envolver o campo de senha no
+    HTML final (dividir isso em vários st.markdown soltos não funciona no
+    Streamlit — cada st.markdown é um fragmento de HTML independente, uma
+    tag aberta ali não continua "aberta" no próximo elemento)."""
+    st.markdown("""
+        <style>
+        /* Fundo cheio em degradê verde DRS, só nesta tela (login) */
+        .stApp { background: linear-gradient(160deg, #10281f 0%, #1b3834 45%, #12302c 100%) !important; }
+        [data-testid="stSidebar"] { display: none !important; }
+        header[data-testid="stHeader"] { background: rgba(0,0,0,0) !important; }
 
+        .drs-login-topo {
+            height: 6px; margin: -12px -12px 22px -12px;
+            background: linear-gradient(90deg, var(--drs-teal), var(--drs-laranja));
+            border-radius: 10px 10px 0 0;
+        }
+        .drs-login-badge {
+            width: 56px; height: 56px; margin: 0 auto 16px auto;
+            border-radius: 14px;
+            background: linear-gradient(135deg, var(--drs-verde) 0%, var(--drs-verde-escuro) 100%);
+            display: flex; align-items: center; justify-content: center;
+            font-family: 'Inter', sans-serif; font-weight: 800; font-size: 18px; color: #ffffff;
+            letter-spacing: 0.5px;
+            box-shadow: 0 8px 20px rgba(18,48,44,0.35);
+        }
+        .drs-login-title {
+            text-align: center; font-family: 'Inter', sans-serif; font-weight: 800 !important;
+            font-size: 22px !important; color: var(--drs-verde) !important;
+            letter-spacing: 0.4px; margin: 0 !important;
+        }
+        .drs-login-subtitle {
+            text-align: center; font-family: 'Inter', sans-serif; font-weight: 700; font-size: 12px;
+            color: var(--drs-laranja); text-transform: uppercase; letter-spacing: 1.2px;
+            margin: 6px 0 18px 0;
+        }
+        .drs-login-desc {
+            text-align: center; font-size: 13px; color: var(--drs-texto-2); line-height: 1.5; margin-bottom: 6px;
+        }
+        .drs-login-footer {
+            font-size: 11px; color: #a9b3b1; text-align: center; margin-top: 16px;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 1.3, 1])
+    with col2:
+        with st.container():
+            st.markdown("""
+                <div class="drs-login-topo"></div>
+                <div style="padding: 22px 18px 6px 18px;">
+                    <div class="drs-login-badge">DRS</div>
+                    <p class="drs-login-title">DRS GROUP</p>
+                    <p class="drs-login-subtitle">🧬 Célula 03 · BMS Operations</p>
+                    <p class="drs-login-desc">Painel interno de automação de Packing List, controle de<br>
+                    estoque e conferência documental.<br>Acesso restrito à equipe autorizada.</p>
+                </div>
+            """, unsafe_allow_html=True)
+            st.text_input(
+                "Senha de Acesso", type="password", on_change=senha_inserida_callback,
+                key="password_input", label_visibility="collapsed", placeholder="🔒 Senha de acesso",
+            )
+            if mostrar_erro:
+                st.error("❌ Credencial inválida. Acesso negado.")
+            st.markdown("<div class='drs-login-footer'>Acesso restrito · Uso interno DRS Group</div>", unsafe_allow_html=True)
+
+
+def senha_inserida_callback():
+    if st.session_state["password_input"] == SENHA_ACESSO:
+        st.session_state["password_correta"] = True
+        del st.session_state["password_input"]
+    else:
+        st.session_state["password_correta"] = False
+
+
+def verificar_senha():
     if "password_correta" not in st.session_state:
-        st.markdown("<h2 style='color: #1b3834; text-align: center; margin-top: 10vh;'>🔒 DRS Group - Acesso Restrito</h2>", unsafe_allow_html=True)
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.info("Insira suas credenciais para acessar o painel de operações BMS.")
-            st.text_input("Senha de Acesso", type="password", on_change=senha_inserida, key="password_input")
+        tela_login(mostrar_erro=False)
         return False
     elif not st.session_state["password_correta"]:
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.text_input("Senha de Acesso", type="password", on_change=senha_inserida, key="password_input")
-            st.error("❌ Credencial inválida. Acesso negado.")
+        tela_login(mostrar_erro=True)
         return False
     else:
         return True
