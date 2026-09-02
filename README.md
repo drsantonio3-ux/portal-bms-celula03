@@ -94,6 +94,10 @@ Isso é opcional — o app funciona normalmente sem esse passo, usando a URL ant
   - **Etapa 2 — NEWSE x Agendamento**: confere Protocolo/Estudo, CNPJ do centro/destinatário, CEP e a lista de contatos autorizados de entrega (mostrando quantos dos contatos da NEWSE foram encontrados no e-mail de Agendamento, e quais estão faltando). A data/horário de entrega continua sendo ignorada de propósito nesta etapa.
   - **Etapa 3 — Auditoria Final (Minuta)**: confere Protocolo, CNPJ do remetente DRS (contra a lista de CNPJs oficiais), Tracking Number, CNPJ do destinatário, o nome do P.I. (contra o Investigador da NEWSE), a lista de contatos autorizados e a transportadora — todos comparados de verdade contra o texto da Minuta de Envio (SC).
   - Todas essas checagens foram validadas com um conjunto real de 4 documentos do mesmo envio (Packing List, NEWSE, Agendamento e Minuta), incluindo casos de teste propositalmente errados para confirmar que uma divergência real é sempre sinalizada.
+- **Sétima atualização — limpar PDFs e confirmação obrigatória na Etapa 3:**
+  - Botão **"🗑️ Excluir PDFs"** no topo da aba: limpa de uma vez os arquivos anexados nas Etapas 1, 2 e 3 — para quando a pessoa anexou o arquivo errado ou só quer recomeçar.
+  - Depois que a Etapa 3 mostra o resultado (Aprovado ou Reprovado), é **obrigatório clicar em "✅ OK — Revisei o Resultado da Etapa 3"** antes de continuar.
+  - Só depois desse OK aparece o aviso **"Não esqueça de validar a planilha de expedição"** e o botão **"🔓 Liberar Processo"**, que limpa os PDFs das 3 etapas de uma vez (igual ao botão do topo) para começar a próxima conferência.
 
 ## Limitações conhecidas (não corrigidas nesta rodada, por serem mudanças maiores)
 
