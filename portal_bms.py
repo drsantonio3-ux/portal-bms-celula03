@@ -48,6 +48,26 @@ def detectar_faixas_tagalert(texto_upper):
     return tem_ref, tem_amb
 
 
+def detectar_faixas_newse(texto_upper):
+    """Igual à detectar_faixas_tagalert, mas para o texto da NEWSE (solicitação),
+    que escreve a faixa de temperatura em português — "2 A 8ºC", "15 A 25ºC" —
+    em vez do formato "TEMP 2-8 C" do Packing List em inglês. Não depende de
+    nenhuma palavra tipo "TAGALERT" por perto, porque a NEWSE não indica o
+    dispositivo — só a faixa de temperatura de cada item."""
+    tem_ref = False
+    tem_amb = False
+    # Sem \b depois do "C": na NEWSE, a Quantidade às vezes vem colada direto
+    # depois da temperatura sem espaço (ex: "2 A 8ºC12"), e exigir um limite
+    # de palavra ali fazia a expressão nunca casar nesse formato.
+    for m in re.finditer(r"(\d+(?:[.,]\d+)?)\s*A\s*(\d+(?:[.,]\d+)?)\s*[°º]?C", texto_upper):
+        limite_superior = float(m.group(2).replace(",", "."))
+        if limite_superior <= 8:
+            tem_ref = True
+        else:
+            tem_amb = True
+    return tem_ref, tem_amb
+
+
 # --- Reconhecimento de medicações citotóxicas (para agrupamento de loggers) ---
 # Usada para decidir, ITEM A ITEM, se ele precisa de caixa/logger separado.
 # Tem lookahead negativo em PACLITAXEL para não confundir com PACLITAXEL NAB
@@ -424,6 +444,10 @@ if "alocacao_pendente" not in st.session_state:
     st.session_state.alocacao_pendente = False
 if "packing_uploader_key" not in st.session_state:
     st.session_state.packing_uploader_key = 0
+if "solicitacoes_brasil_registradas" not in st.session_state:
+    st.session_state.solicitacoes_brasil_registradas = {}  # arquivo_id -> {itens, data_uso}
+if "brasil_uploader_key" not in st.session_state:
+    st.session_state.brasil_uploader_key = 0
 
 # --- CARREGAR DADOS E ESTOQUE ---
 @st.cache_data(ttl=1)
@@ -496,6 +520,7 @@ with st.sidebar:
     paginas_menu = [
         ("automacao", "📦  Automação de Packing List"),
         ("cruzamento", "⚖️  Cruzamento NEWSE x PACKING"),
+        ("bms_brasil", "🇧🇷  BMS Brasil - Solicitações"),
         ("email", "📧  Gerador de E-mail (GR)"),
     ]
     for chave, rotulo in paginas_menu:
@@ -1218,6 +1243,210 @@ elif st.session_state.pagina_atual == "cruzamento":
 
                 except Exception as e:
                     st.error(f"Erro na execução da conferência: {e}")
+
+# ==========================================
+# PÁGINA: BMS BRASIL - SOLICITAÇÕES (retirada de TAG sem Packing List)
+# ==========================================
+elif st.session_state.pagina_atual == "bms_brasil":
+
+    st.markdown("""
+        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">🇧🇷 BMS Brasil — Solicitações</h2>
+            <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
+                Para solicitações da <b>BMS Brasil</b>, a NEWSE não vem acompanhada de Packing List com TAG/TEMP já definido.
+                Anexe a <b>NEWSE (PDF)</b> aqui para retirar automaticamente o <b>Tag Alert</b> (Ambiente ou Refrigerado, conforme a
+                faixa de temperatura da solicitação) e registrar a retirada para rastreabilidade — sem TempTale, e sem precisar
+                editar a planilha manualmente.
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    arquivo_newse_brasil = st.file_uploader(
+        "📥 Arraste o PDF da NEWSE (Solicitação Brasil) aqui",
+        type=["pdf"],
+        key=f"brasil_{st.session_state.brasil_uploader_key}",
+    )
+
+    if arquivo_newse_brasil is None:
+        # Mesma lógica da página de Automação: sem arquivo anexado, nada foi
+        # de fato retirado do estoque ainda, então a navegação não precisa
+        # ficar travada — permite cancelar só removendo o arquivo.
+        st.session_state.alocacao_pendente = False
+
+    if arquivo_newse_brasil is not None:
+        leitor_brasil = PdfReader(arquivo_newse_brasil)
+        texto_brasil_upper = extrair_texto_pdf(leitor_brasil).upper()
+
+        # --- Protocolo do estudo ---
+        estudo_brasil = "NÃO IDENTIFICADO"
+        match_protocolo_brasil = re.search(r"\bCA\d+-\d+\b", texto_brasil_upper)
+        if match_protocolo_brasil:
+            estudo_brasil = match_protocolo_brasil.group(0)
+
+        # --- TE do estudo: primeiro tenta achar impresso na própria NEWSE;
+        # se não achar, cai no mesmo fallback por planilha usado na Automação ---
+        te_brasil = "NÃO ENCONTRADO"
+        match_te_brasil = re.search(r"\bTE\s*(\d{3,5})\b", texto_brasil_upper)
+        if match_te_brasil:
+            te_brasil = f"TE{match_te_brasil.group(1)}"
+        elif df_te is not None:
+            for idx, row in df_te.iterrows():
+                if estudo_brasil != "NÃO IDENTIFICADO" and estudo_brasil in str(row['Estudo']).upper():
+                    te_brasil = str(row['TE']).strip(); break
+
+        # --- Centro / instituição de destino (apenas para exibição/contexto) ---
+        centro_brasil = "NÃO IDENTIFICADO"
+        match_centro_brasil = re.search(
+            r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\s*-\s*([A-ZÀ-Ú\s]+?)\s*\d{2}\.\d{3}\.\d{3}",
+            texto_brasil_upper
+        )
+        if match_centro_brasil:
+            centro_brasil = match_centro_brasil.group(1).strip()
+
+        # --- Faixa de temperatura (decide Tag Alert Ambiente x Refrigerado) ---
+        tem_ref_brasil, tem_amb_brasil = detectar_faixas_newse(texto_brasil_upper)
+
+        st.success("✅ NEWSE processada com sucesso.")
+        c1, c2, c3 = st.columns(3)
+        with c1: st.markdown(card_metrica("Centro / Instituição", centro_brasil), unsafe_allow_html=True)
+        with c2: st.markdown(card_metrica("Protocolo / Estudo", estudo_brasil), unsafe_allow_html=True)
+        with c3: st.markdown(card_metrica("TE Correspondente", te_brasil), unsafe_allow_html=True)
+        st.write("")
+
+        st.markdown("### 🏷️ Retirada de Tag Alert")
+
+        if not tem_ref_brasil and not tem_amb_brasil:
+            st.warning("⚠️ Não foi possível identificar a faixa de temperatura (Ambiente/Refrigerado) nesta NEWSE. Verifique o documento manualmente.")
+
+        # Identidade estável deste upload — evita duplicar a retirada se a
+        # página recarregar com o mesmo PDF ainda anexado (mesmo padrão da
+        # página de Automação).
+        arquivo_id_brasil = getattr(arquivo_newse_brasil, "file_id", None) or f"{arquivo_newse_brasil.name}_{arquivo_newse_brasil.size}"
+        registro_existente_brasil = st.session_state.solicitacoes_brasil_registradas.get(arquivo_id_brasil)
+
+        if registro_existente_brasil:
+            st.session_state.alocacao_pendente = False
+            itens_brasil = registro_existente_brasil["itens"]
+            st.success(f"✅ Retirada já registrada para esta NEWSE em {registro_existente_brasil['data_uso']}.")
+            for p in itens_brasil:
+                st.markdown(f"- **{p['label']}** ➔ Palete: {p['palete']} | ID: {p['id_est']} | Série: {p['serie']}")
+            st.caption("Para registrar uma nova solicitação, envie um novo arquivo PDF acima.")
+        else:
+            itens_brasil = []
+
+            if df_estoque is not None and not df_estoque.empty:
+                df_estoque_temp_brasil = df_estoque.copy()
+
+                def allocate_logger_brasil(nome_busca, label):
+                    filtro = df_estoque_temp_brasil[
+                        df_estoque_temp_brasil['Descricao_Clean'].str.contains(nome_busca, na=False)
+                    ]
+                    if not filtro.empty:
+                        item = filtro.iloc[0]
+                        df_estoque_temp_brasil.drop(item.name, inplace=True)
+                        serie = next((str(item[c]) for c in item.index if "SERIE" in c.upper() or "SÉRIE" in c.upper()), str(item.iloc[7]) if len(item) > 7 else "N/A")
+                        itens_brasil.append({
+                            "label": label,
+                            "palete": str(item.get('Palete', 'N/A')).strip(),
+                            "id_est": str(item.get('Identificacao Estoque', 'N/A')).strip(),
+                            "serie": serie
+                        })
+                        st.info(f"**{label}** alocado ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')} | Série: {serie}")
+                    else:
+                        st.warning(f"⚠️ **{label}**: Sem saldo disponível no estoque!")
+
+                # Só Tag Alert — solicitações Brasil não usam TempTale (pedido
+                # explícito do usuário: "para solicitações brasil não mandamos
+                # TEMPTALE"). Um Tag Alert por faixa de temperatura detectada.
+                if tem_amb_brasil:
+                    allocate_logger_brasil("TAGALERT 15-25", "Tag Alert Ambiente")
+                if tem_ref_brasil:
+                    allocate_logger_brasil("TAGALERT 2-8", "Tag Alert Refrigerado")
+
+                st.session_state.alocacao_pendente = bool(itens_brasil)
+
+                if itens_brasil:
+                    st.markdown(
+                        "<div class='drs-alerta-pendente'>⚠️ Retirada pendente de confirmação — clique em "
+                        "<b>Gravar Solicitação Brasil</b> antes de sair desta página, "
+                        "ou os itens acima podem ser usados por outra pessoa.</div>",
+                        unsafe_allow_html=True
+                    )
+                    components.html(
+                        "<script>window.parent.onbeforeunload = function(e){ e.preventDefault(); e.returnValue = ''; return ''; };</script>",
+                        height=0
+                    )
+                else:
+                    components.html("<script>window.parent.onbeforeunload = null;</script>", height=0)
+
+                col_id_brasil, col_btn_brasil = st.columns([2, 1])
+                with col_id_brasil:
+                    # Campo travado de propósito — pedido explícito do usuário:
+                    # solicitações Brasil não têm um DEL# de verdade, então o
+                    # identificador fica fixo como "Solicitação Brasil" (não
+                    # editável) em vez de um campo de texto livre.
+                    st.text_input("Identificador para registro:", value="Solicitação Brasil", disabled=True)
+                with col_btn_brasil:
+                    st.write("")
+                    if st.button("💾 Gravar Solicitação Brasil", use_container_width=True, disabled=not itens_brasil):
+                        webhook_url = st.secrets.get(
+                            "WEBHOOK_BAIXA_ESTOQUE",
+                            "https://script.google.com/macros/s/AKfycbzpwZC2LW7PQ1JGMkJIZD3Rxd4nv4pfEZ1QS1D9jDxQbt4Qf2hiCmv9dJ8pAJnBHJglug/exec"
+                        )
+
+                        payload = {
+                            "data_uso": datetime.today().strftime('%d/%m/%Y'),
+                            "delivery_number": "Solicitação Brasil",
+                            "estudo": estudo_brasil,
+                            "te": te_brasil,
+                            "cidade_destino": centro_brasil,
+                            "itens": [
+                                {
+                                    "tipo": p["label"],
+                                    "palete": p["palete"],
+                                    "id_est": p["id_est"],
+                                    "serie": p["serie"]
+                                } for p in itens_brasil
+                            ]
+                        }
+
+                        try:
+                            req = urllib.request.Request(
+                                webhook_url,
+                                data=json.dumps(payload).encode('utf-8'),
+                                headers={'Content-Type': 'application/json'}
+                            )
+                            resposta_bruta = urllib.request.urlopen(req, timeout=25).read().decode("utf-8")
+                            try:
+                                resposta = json.loads(resposta_bruta)
+                            except ValueError:
+                                resposta = {}
+
+                            if resposta.get("result") != "success":
+                                raise RuntimeError(
+                                    resposta.get("message", f"Resposta inesperada do servidor: {resposta_bruta[:300]}")
+                                )
+
+                            for p in itens_brasil:
+                                st.session_state.seriais_consumidos.add(str(p["serie"]).strip())
+                                st.session_state.ids_consumidos.add(str(p["id_est"]).strip())
+
+                            st.session_state.solicitacoes_brasil_registradas[arquivo_id_brasil] = {
+                                "itens": itens_brasil,
+                                "data_uso": datetime.today().strftime('%d/%m/%Y %H:%M'),
+                            }
+                            st.session_state.alocacao_pendente = False
+                            st.session_state.brasil_uploader_key += 1
+
+                            st.cache_data.clear()
+                            itens_txt_brasil = ", ".join([p["label"] for p in itens_brasil])
+                            st.success(f"✅ Retirada registrada com sucesso para: {itens_txt_brasil}.")
+                            time.sleep(2)
+                            st.rerun()
+                        except Exception as ex:
+                            st.error(f"Erro ao atualizar planilha: {ex}")
+            else:
+                st.warning("⚠️ Estoque indisponível no momento — não é possível alocar Tag Alert automaticamente.")
 
 # ==========================================
 # PÁGINA: GERADOR DE E-MAIL (GR)
