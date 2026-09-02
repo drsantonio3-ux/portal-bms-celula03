@@ -511,6 +511,14 @@ if st.session_state.pagina_atual == "automacao":
         )
     with col_data: data_recebimento = st.date_input("Data de Recebimento", datetime.today())
 
+    if arquivo_pdf is None:
+        # Sem PDF anexado nesta tela: nada foi de fato retirado do estoque
+        # (isso só acontece depois que "Executar Baixa" confirma sucesso), então
+        # não há motivo para manter a navegação travada. Isso permite cancelar
+        # uma alocação pendente simplesmente removendo o arquivo (clicando no
+        # "x" do upload), em vez de ficar preso até preencher um DEL#.
+        st.session_state.alocacao_pendente = False
+
     if arquivo_pdf is not None:
         leitor = PdfReader(arquivo_pdf)
         texto_upper = extrair_texto_pdf(leitor).upper()
