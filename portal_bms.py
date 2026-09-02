@@ -16,6 +16,29 @@ def extrair_texto_pdf(leitor, separador=""):
     return separador.join([(pagina.extract_text() or "") for pagina in leitor.pages])
 
 
+def detectar_faixas_tagalert(texto_upper):
+    """Procura no Packing List cada faixa de temperatura (ex: "TEMP 2-8 C",
+    "TEMP 2-25 C", "TEMP 15-25 C") e verifica se ela está associada a um item
+    com TAGALERT por perto. Classifica pelo limite superior da faixa:
+    até 8°C = Refrigerado, acima disso = Ambiente.
+
+    Isso é mais robusto do que checar por um texto fixo tipo "15-25" ou
+    "2-30C", porque cada Packing List pode escrever a faixa de um jeito
+    diferente (2-25, 20-25, 15-30, com ou sem espaço antes do "C" etc)."""
+    tem_ref = False
+    tem_amb = False
+    for m in re.finditer(r"TEMP\s*-?\d+(?:[.,]\d+)?\s*-\s*(\d+(?:[.,]\d+)?)\s*C", texto_upper):
+        janela = texto_upper[m.end(): m.end() + 200]
+        if "TAGALERT" not in janela and "TAG ALERT" not in janela:
+            continue
+        limite_superior = float(m.group(1).replace(",", "."))
+        if limite_superior <= 8:
+            tem_ref = True
+        else:
+            tem_amb = True
+    return tem_ref, tem_amb
+
+
 # --- CONFIGURAÇÕES DA PÁGINA (SaaS Logístico - Wide) ---
 st.set_page_config(page_title="DRS Group | BMS Operations", layout="wide", page_icon="🏢")
 
@@ -352,8 +375,13 @@ if st.session_state.pagina_atual == "automacao":
                     te_resultado = str(row['TE']).strip(); break
 
         tem_temptale = "TEMPTALE" in texto_upper or "TT4" in texto_upper
-        tem_tagalert_ref = "TAGALERT" in texto_upper and ("2-8" in texto_upper or "REFRIGER" in texto_upper or "36-46F" in texto_upper)
-        tem_tagalert_amb = "TAGALERT" in texto_upper and ("20-25" in texto_upper or "15-25" in texto_upper or "2-30C" in texto_upper or not tem_tagalert_ref)
+        tem_tagalert_ref, tem_tagalert_amb = detectar_faixas_tagalert(texto_upper)
+        # Salvaguarda: se por algum motivo nenhuma faixa numérica foi reconhecida
+        # mas a palavra TAGALERT está no documento, trata como Ambiente por padrão
+        # (evita que um Tag Alert "passe em branco" por causa de um formato de
+        # temperatura ainda não previsto no texto do Packing List).
+        if "TAGALERT" in texto_upper and not tem_tagalert_ref and not tem_tagalert_amb:
+            tem_tagalert_amb = True
 
         CITOTOXICOS = ["BORTEZOMIB", "SPRYCEL", "DASATINIB", "PACLITAXEL", "TAXOL", "CYCLOPHOSPHAMIDE", "CICLOFOSFAMIDA"]
         tem_citotoxico = any(c in texto_upper for c in CITOTOXICOS)
