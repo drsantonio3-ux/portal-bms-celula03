@@ -48,12 +48,16 @@ def detectar_faixas_tagalert(texto_upper):
     return tem_ref, tem_amb
 
 
-# --- Reconhecimento de medicações citotóxicas ---
-# Lista usada tanto para a regra de "caixa separada / logger extra" quanto
-# para decidir qual ficha de segurança anexar. Usa lookahead negativo em
-# PACLITAXEL para não confundir com PACLITAXEL NAB / PACLITAXELNAB
-# (nab-paclitaxel/Abraxane, com ou sem espaço no PDF), que é uma
-# formulação diferente e não entra nessa regra.
+# --- Reconhecimento de medicações citotóxicas (para agrupamento de loggers) ---
+# Usada para decidir, ITEM A ITEM, se ele precisa de caixa/logger separado.
+# Tem lookahead negativo em PACLITAXEL para não confundir com PACLITAXEL NAB
+# / PACLITAXELNAB (nab-paclitaxel/Abraxane): em Packing Lists reais, quando
+# o item de nab-paclitaxel não vem com a palavra "Cytotoxic" no próprio
+# campo de Storage, ele não teve que dividir caixa/logger com os demais
+# itens citotóxicos (validado com documento real — teria feito o sistema
+# voltar a contar errado a quantidade de TempTale). Isso é independente de
+# precisar ou não da ficha de segurança — ver FICHAS_SEGURANCA mais abaixo,
+# que trata PACLITAXEL NAB como precisando da mesma ficha do Paclitaxel.
 CITOTOXICOS_REGEX = re.compile(r"BORTEZOMIB|SPRYCEL|DASATINIB|PACLITAXEL(?!\s*NAB)|TAXOL|CYCLOPHOSPHAMIDE|CICLOFOSFAMIDA")
 # Além da lista de nomes conhecidos acima, muitas Packing Lists já trazem a
 # palavra "Cytotoxic" (ou "Citotóxico") escrita no próprio campo de Storage
@@ -174,7 +178,7 @@ def agrupar_loggers_necessarios(itens):
 FICHAS_SEGURANCA = [
     (re.compile(r"BORTEZOMIB"), "fichas_seguranca/ficha_bortezomib.pdf", "Bortezomib (Velcade)"),
     (re.compile(r"SPRYCEL|DASATINIB"), "fichas_seguranca/ficha_sprycel_dasatinib.pdf", "Sprycel / Dasatinib"),
-    (re.compile(r"PACLITAXEL(?!\s*NAB)|TAXOL"), "fichas_seguranca/ficha_taxol_paclitaxel.pdf", "Taxol / Paclitaxel"),
+    (re.compile(r"PACLITAXEL|TAXOL"), "fichas_seguranca/ficha_taxol_paclitaxel.pdf", "Taxol / Paclitaxel"),
     (re.compile(r"CYCLOPHOSPHAMIDE|CICLOFOSFAMIDA"), "fichas_seguranca/ficha_ciclofosfamida.pdf", "Cyclophosphamide / Ciclofosfamida"),
 ]
 
@@ -821,7 +825,7 @@ if st.session_state.pagina_atual == "automacao":
                 "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 6.1” quando houver o envio de “DASATINIB OU SPRYCEL."
             ])
 
-        if re.search(r"PACLITAXEL(?!\s*NAB)|TAXOL", texto_upper):
+        if re.search(r"PACLITAXEL|TAXOL", texto_upper):
             paragrafos.extend([
                 "As medicações foram acondicionadas em embalagem apropriada CREDO 28L validada pelo cliente com Tag Alert ambiente conforme solicitado pelo cliente.",
                 "O formulário de requisição dos produtos comerciais, deverá ser enviado para a Instituição de destino.",
