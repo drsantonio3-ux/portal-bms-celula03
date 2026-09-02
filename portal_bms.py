@@ -993,6 +993,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                         ("FUNDACAO PIO XII", ["PIO XII"]),
                         ("HOSPITAL SAO LUCAS DA PUCRS", ["SAO LUCAS"]),
                         ("ICESP", ["ICESP", "INSTITUTO DO CANCER"]),
+                        ("HOSPITAL MOINHOS DE VENTO", ["MOINHOS DE VENTO"]),
                     ]
 
                     def identificar_centro(texto):
@@ -1045,8 +1046,25 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_pi_match = re.search(r"DR\.?A?\.?\s+([A-Z][A-Z\s]+?)\s*TEL\s*:", texto_packing_upper)
                     p_pi = limpar(p_pi_match.group(1)) if p_pi_match else "NÃO CONSTA"
 
-                    if p_pi != "NÃO CONSTA" and p_pi in texto_sol_upper:
-                        s_pi = p_pi
+                    # Comparação tolerante a pequenas diferenças de grafia/digitação
+                    # entre os sistemas (ex: nome do meio duplicado ou digitado com
+                    # uma letra diferente no Packing List). Em vez de exigir o nome
+                    # inteiro como substring exata, confirma-se pelo PRIMEIRO e
+                    # ÚLTIMO nome (mais estável entre os dois documentos) — reduz
+                    # falsos "divergência" por causa de erro de digitação em nomes
+                    # do meio, mantendo baixo risco de confirmar a pessoa errada.
+                    pi_investigador_conferido = False
+                    pi_exato = False
+                    if p_pi != "NÃO CONSTA":
+                        palavras_pi = [w for w in p_pi.split() if len(w) >= 3]
+                        if p_pi in texto_sol_upper:
+                            pi_investigador_conferido = True
+                            pi_exato = True
+                        elif len(palavras_pi) >= 2 and palavras_pi[0] in texto_sol_upper and palavras_pi[-1] in texto_sol_upper:
+                            pi_investigador_conferido = True
+
+                    if pi_investigador_conferido:
+                        s_pi = p_pi if pi_exato else f"{p_pi} (confirmado por nome/sobrenome — grafia difere no meio)"
                     elif p_pi != "NÃO CONSTA":
                         s_pi = "NÃO ENCONTRADO NA NEWSE"
                     else:
@@ -1079,7 +1097,13 @@ elif st.session_state.pagina_atual == "cruzamento":
                     # do texto da NEWSE. O método antigo podia dar falso positivo
                     # (um serial coincidir com pedaço de CEP/CNPJ/telefone) e não
                     # detectava serial que a NEWSE tivesse a mais.
-                    seriais_newse = re.findall(r"(\d{5,7})\s*(?:AREA|CAMARA)", texto_sol_upper)
+                    # O \b (limite de palavra) antes do grupo é necessário porque a
+                    # série de um logger (ex: Tag Alert) às vezes vem no formato
+                    # alfanumérico "15450K53039" — sem o \b, a regex pescava só o
+                    # pedaço final em dígitos ("53039") como se fosse um serial de
+                    # produto de verdade, inflando a quantidade e criando uma
+                    # divergência falsa nessa linha.
+                    seriais_newse = re.findall(r"\b(\d{5,7})\s*(?:AREA|CAMARA)", texto_sol_upper)
                     if not seriais_newse:
                         # Layout de NEWSE não reconhecido — usa o método antigo como
                         # rede de segurança em vez de não comparar nada.
@@ -1093,16 +1117,18 @@ elif st.session_state.pagina_atual == "cruzamento":
                     s_qty = str(len(seriais_newse)) if seriais_newse else "NÃO CONSTA"
 
                     # --- COMPARAÇÃO ESTRITA ---
-                    # Confirmação cruzada: quando o nome da instituição não bate por
-                    # grafia diferente entre os dois sistemas, mas o CEP de destino
+                    # Confirmação cruzada: quando o nome da instituição não é
+                    # reconhecido em nenhum dos dois documentos (ou está escrito de
+                    # forma diferente entre os dois sistemas), mas o CEP de destino
                     # dos dois documentos é idêntico, isso já confirma que é o mesmo
                     # endereço/centro de destino — não faz sentido bloquear a
-                    # remessa só porque o nome foi escrito de um jeito diferente.
+                    # remessa só porque o nome não bateu ou não foi reconhecido.
+                    centro_confirmado_por_alias = (s_centre != "NÃO CONSTA" and s_centre == p_centre)
                     centro_confirmado_por_cep = (
-                        s_addr != "NÃO CONSTA" and s_addr == p_addr
-                        and s_centre != p_centre
+                        not centro_confirmado_por_alias
+                        and s_addr != "NÃO CONSTA" and s_addr == p_addr
                     )
-                    centro_ok = (s_centre != "NÃO CONSTA" and s_centre == p_centre) or centro_confirmado_por_cep
+                    centro_ok = centro_confirmado_por_alias or centro_confirmado_por_cep
 
                     dados_validacao = [
                         {
@@ -1125,8 +1151,8 @@ elif st.session_state.pagina_atual == "cruzamento":
                             "Documento Validado": p_centre,
                             "Status": "✅ Conforme" if centro_ok else "❌ Divergência",
                             "Observação": (
-                                "Razão social avaliada." if (s_centre != "NÃO CONSTA" and s_centre == p_centre)
-                                else "Nome do centro escrito de forma diferente nos dois sistemas, mas confirmado pelo CEP de destino (idêntico nos dois documentos)." if centro_confirmado_por_cep
+                                "Razão social avaliada." if centro_confirmado_por_alias
+                                else "Nome do centro não reconhecido ou escrito de forma diferente nos dois sistemas, mas confirmado pelo CEP de destino (idêntico nos dois documentos)." if centro_confirmado_por_cep
                                 else "Divergência na razão social / centro."
                             )
                         },
@@ -1141,8 +1167,12 @@ elif st.session_state.pagina_atual == "cruzamento":
                             "Campo Validado": "Investigator Name",
                             "Documento Fonte": s_pi,
                             "Documento Validado": p_pi,
-                            "Status": "✅ Conforme" if p_pi != "NÃO CONSTA" and s_pi == p_pi else "❌ Divergência",
-                            "Observação": "Nome do investigador comparado." if s_pi == p_pi else "Investigador do Packing List não foi encontrado no texto da NEWSE."
+                            "Status": "✅ Conforme" if pi_investigador_conferido else "❌ Divergência",
+                            "Observação": (
+                                "Nome do investigador idêntico nos dois documentos." if pi_exato
+                                else "Nome e sobrenome do investigador conferem, mas a grafia do nome do meio difere entre os documentos (provável erro de digitação)." if pi_investigador_conferido
+                                else "Investigador do Packing List não foi encontrado no texto da NEWSE."
+                            )
                         },
                         {
                             "Campo Validado": "Total quantity in shipment",
