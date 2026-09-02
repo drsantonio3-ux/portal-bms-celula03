@@ -220,10 +220,14 @@ if "alocacao_pendente" not in st.session_state:
 @st.cache_data(ttl=1)
 def carregar_dados_sheets():
     id_estoque = st.secrets.get("ID_PLANILHA_ESTOQUE", "10f18RZ-48HiJS2HckG6Siw2WRE9zz92_Pj6chkTwXik")
+    gid_estoque = st.secrets.get("GID_PLANILHA_ESTOQUE", "667151981")
     id_loggers = st.secrets.get("ID_PLANILHA_LOGGERS", "1ztZC3s0kKINJLNOR-BEYUUFjycxSVT7NMGVNWdxWh98")
 
     cb = int(time.time())
-    url_estoque = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv&cb={cb}"
+    # gid fixo (aba "ESTOQUE" confirmada com o usuário) em vez de depender de
+    # qual aba está posicionada primeiro na planilha — evita que a leitura
+    # "pule" para outra aba se alguém reordenar ou criar uma aba nova antes dela.
+    url_estoque = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv&gid={gid_estoque}&cb={cb}"
     url_tes = f"https://docs.google.com/spreadsheets/d/{id_loggers}/export?format=csv&gid=536812026&cb={cb}"
 
     try: df_est = pd.read_csv(url_estoque)
@@ -512,7 +516,21 @@ if st.session_state.pagina_atual == "automacao":
                                     data=json.dumps(payload).encode('utf-8'),
                                     headers={'Content-Type': 'application/json'}
                                 )
-                                urllib.request.urlopen(req, timeout=25)
+                                resposta_bruta = urllib.request.urlopen(req, timeout=25).read().decode("utf-8")
+                                try:
+                                    resposta = json.loads(resposta_bruta)
+                                except ValueError:
+                                    resposta = {}
+
+                                # O Apps Script sempre responde com HTTP 200, mesmo quando ele
+                                # mesmo capturou um erro internamente (planilha/aba não encontrada,
+                                # item não localizado etc). Por isso não basta a chamada não ter
+                                # "explodido" — é preciso checar o campo "result" que o script devolve
+                                # para não mostrar "sucesso" quando na verdade nada foi gravado.
+                                if resposta.get("result") != "success":
+                                    raise RuntimeError(
+                                        resposta.get("message", f"Resposta inesperada do servidor: {resposta_bruta[:300]}")
+                                    )
 
                                 # Só marca os itens como consumidos (some da visão de todo mundo)
                                 # e só trava o arquivo como "já processado" DEPOIS de confirmar
