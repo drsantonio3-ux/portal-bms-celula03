@@ -86,6 +86,14 @@ Isso é opcional — o app funciona normalmente sem esse passo, usando a URL ant
   - O nome do investigador principal agora também é reconhecido quando há uma pequena diferença de digitação entre os dois documentos (ex: um nome do meio duplicado por engano em um dos sistemas), desde que o primeiro e o último nome batam.
 - **Webhook de baixa de estoque corrigido**: o script que grava nas abas "Auditoria" e "Loggers Já Utilizados" estava procurando essas duas abas dentro da planilha errada (a de Estoque, em vez da planilha "LOGGER BMS", onde elas realmente ficam) — por isso a baixa "funcionava" (o item saía do estoque), mas o registro de rastreabilidade nunca era gravado, sem mostrar erro nenhum. **Esse arquivo precisa ser atualizado manualmente no Google Apps Script** (ver instruções enviadas junto com esta atualização) — só subir o `portal_bms.py` novo no GitHub não é suficiente para essa correção específica.
 
+## O que mudou na quinta atualização (nova aba: Conferência de Agendamento)
+
+- **Nova aba "Conferência de Agendamento"**: traz para dentro do Portal BMS o painel de auditoria em 3 etapas que já existia separado ("Validador DRS Group - Logística"), com os mesmos campos e a mesma lógica de aprovação/reprovação:
+  - **Etapa 1 — Pedido x NEWSE**: confere o Número da Ordem (IWRS Shipment Number x Número da ordem), Investigador, Responsável pelo recebimento e Endereço de destino, além de mostrar lado a lado o texto extraído de cada documento para conferência visual dos itens/lotes/quantidades.
+  - **Etapa 2 — NEWSE x Agendamento**: confere Protocolo/Estudo, CNPJ do centro, contatos autorizados de entrega (a data/horário de entrega é ignorada de propósito nesta etapa).
+  - **Etapa 3 — Auditoria Final (Minuta)**: confere se o CNPJ do remetente na Minuta de Envio (SC) é um dos CNPJs oficiais da DRS, além de Tracking Number, CNPJ/endereço do destinatário, contatos autorizados/P.I. e transportadora.
+  - **Importante:** assim como no painel original, as Etapas 2 e alguns campos das Etapas 1 e 3 ainda são uma conferência visual (você compara o texto extraído mostrado na tela) — só uma parte dos campos (Número da Ordem na Etapa 1, CNPJ do remetente na Etapa 3) tem checagem automática por enquanto. Se quiser, dá para evoluir isso depois para checar automaticamente os demais campos também, do mesmo jeito que foi feito no Cruzamento NEWSE x PACKING.
+
 ## Limitações conhecidas (não corrigidas nesta rodada, por serem mudanças maiores)
 
 - **Uso simultâneo**: se duas pessoas derem baixa em itens de estoque quase ao mesmo tempo, existe uma janela pequena em que ambas podem "ver" o mesmo item como disponível antes da planilha atualizar. Isso ficou um pouco mais seguro nesta atualização (o item só some depois da confirmação), mas a janela de concorrência em si ainda existe.
