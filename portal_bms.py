@@ -19,53 +19,127 @@ def extrair_texto_pdf(leitor, separador=""):
 # --- CONFIGURAÇÕES DA PÁGINA (SaaS Logístico - Wide) ---
 st.set_page_config(page_title="DRS Group | BMS Operations", layout="wide", page_icon="🏢")
 
-# --- INJEÇÃO DE CSS (Design WMS / Logística Ajustado) ---
+# --- INJEÇÃO DE CSS (Identidade Visual DRS Group) ---
 st.markdown("""
     <style>
-    .stApp { background-color: #f4f7f9; }
-    
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    :root {
+        --drs-verde-escuro: #12302c;
+        --drs-verde: #1b3834;
+        --drs-teal: #209b7c;
+        --drs-laranja: #e59235;
+        --drs-fundo: #eef3f2;
+        --drs-borda: #dde6e3;
+        --drs-texto-2: #64748b;
+    }
+
+    html, body, [class*="css"], .stApp {
+        font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important;
+    }
+
+    .stApp {
+        background: radial-gradient(circle at top left, #f6faf9 0%, var(--drs-fundo) 55%);
+    }
+
+    header[data-testid="stHeader"] { background: rgba(0,0,0,0); }
+
     h1, h2, h3, h4, h5, h6 {
-        color: #1b3834 !important;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        font-weight: 600;
+        color: var(--drs-verde) !important;
+        font-weight: 700;
         margin-bottom: 0.3rem;
     }
-    h2 { font-size: 18px !important; }
-    h3 { font-size: 14px !important; }
+    h2 { font-size: 19px !important; letter-spacing: -0.2px; }
+    h3 { font-size: 13px !important; text-transform: uppercase; letter-spacing: 0.6px; color: var(--drs-texto-2) !important; font-weight: 700 !important; }
     h4 { font-size: 12px !important; }
-    
+
+    /* Botões padrão (fora da sidebar) */
     .stButton>button {
-        background-color: #209b7c !important;
+        background-color: var(--drs-teal) !important;
         color: white !important;
-        border-radius: 4px;
-        border: none;
-        font-size: 12px !important;
-        font-weight: bold;
-        padding: 0.3rem 0.8rem;
-        transition: 0.2s ease-in-out;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        border-radius: 7px;
+        border: 1px solid var(--drs-teal) !important;
+        font-size: 13px !important;
+        font-weight: 600;
+        padding: 0.45rem 1rem;
+        transition: 0.15s ease-in-out;
+        box-shadow: 0 1px 4px rgba(18,48,44,0.18);
     }
     .stButton>button:hover {
-        background-color: #1b3834 !important;
-        color: #e59235 !important;
+        background-color: var(--drs-verde-escuro) !important;
+        border-color: var(--drs-verde-escuro) !important;
+        color: var(--drs-laranja) !important;
     }
-    
-    div[data-testid="stVerticalBlock"] div[data-testid="stVerticalBlock"] {
-        background-color: #ffffff;
-        padding: 10px;
-        border-radius: 6px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        border: 1px solid #e0e6ed;
+    .stButton>button:disabled {
+        background-color: #e8ecec !important;
+        border-color: #e0e6ed !important;
+        color: #a3adae !important;
+        box-shadow: none !important;
     }
-    
+
+    /* Sidebar */
     [data-testid="stSidebar"] {
-        background-color: #ffffff;
-        border-right: 1px solid #d2dedb;
+        background: linear-gradient(180deg, #ffffff 0%, #f6faf9 100%);
+        border-right: 1px solid var(--drs-borda);
         padding-top: 1rem;
     }
-    
-    .dataframe {
-        font-size: 12px !important;
+    [data-testid="stSidebar"] .stButton>button {
+        background: transparent !important;
+        color: var(--drs-verde) !important;
+        border: 1px solid transparent !important;
+        box-shadow: none !important;
+        text-align: left !important;
+        justify-content: flex-start !important;
+        font-weight: 600 !important;
+        width: 100%;
+    }
+    [data-testid="stSidebar"] .stButton>button:hover {
+        background: #e7f5f0 !important;
+        color: var(--drs-teal) !important;
+    }
+    [data-testid="stSidebar"] .stButton>button[kind="primary"],
+    [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] {
+        background: var(--drs-verde) !important;
+        color: #ffffff !important;
+        border: 1px solid var(--drs-verde) !important;
+        box-shadow: 0 2px 6px rgba(27,56,52,0.28) !important;
+    }
+    [data-testid="stSidebar"] .stButton>button[kind="primary"]:hover,
+    [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"]:hover {
+        color: var(--drs-laranja) !important;
+    }
+
+    /* Cartões / blocos aninhados */
+    div[data-testid="stVerticalBlock"] div[data-testid="stVerticalBlock"] {
+        background-color: #ffffff;
+        padding: 12px;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(18,48,44,0.06);
+        border: 1px solid var(--drs-borda);
+    }
+
+    [data-testid="stFileUploaderDropzone"] {
+        border-radius: 10px !important;
+        border: 1.5px dashed #b7c9c4 !important;
+        background-color: #fafcfb !important;
+    }
+
+    .dataframe { font-size: 12px !important; }
+
+    /* Aviso fixo de pendência (não deixa passar despercebido) */
+    .drs-alerta-pendente {
+        position: sticky;
+        top: 0.5rem;
+        z-index: 999;
+        background: linear-gradient(90deg, #fff4e6, #ffe9cc);
+        border: 1px solid var(--drs-laranja);
+        color: #7a4a10;
+        padding: 10px 16px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 16px;
+        box-shadow: 0 2px 8px rgba(229,146,53,0.18);
     }
     </style>
 """, unsafe_allow_html=True)
@@ -114,6 +188,10 @@ if "seriais_consumidos" not in st.session_state:
     st.session_state.seriais_consumidos = set()
 if "ids_consumidos" not in st.session_state:
     st.session_state.ids_consumidos = set()
+if "baixas_registradas" not in st.session_state:
+    st.session_state.baixas_registradas = {}  # arquivo_id -> {delivery_number, itens, data_uso}
+if "alocacao_pendente" not in st.session_state:
+    st.session_state.alocacao_pendente = False
 
 # --- CARREGAR DADOS E ESTOQUE ---
 @st.cache_data(ttl=1)
@@ -162,51 +240,63 @@ if "pagina_atual" not in st.session_state:
 # --- BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.markdown("""
-        <div style='text-align: left; padding-bottom: 5px;'>
-            <h1 style='color: #1b3834; font-size: 36px; line-height: 0.8; margin: 0; font-family: Arial, sans-serif; letter-spacing: -1px;'>DRS</h1>
+        <div style='text-align: left; padding: 4px 0 10px 0; border-bottom: 1px solid #dde6e3; margin-bottom: 14px;'>
+            <h1 style='color: #1b3834; font-size: 32px; line-height: 0.9; margin: 0; font-family: "Inter", Arial, sans-serif; font-weight: 800; letter-spacing: -1px;'>DRS <span style="color:#209b7c;">GROUP</span></h1>
+            <p style="margin: 4px 0 0 0; font-size: 10px; color: #94a3ab; font-weight: 700; letter-spacing: 1.5px;">BMS OPERATIONS</p>
         </div>
     """, unsafe_allow_html=True)
-    
+
     st.markdown("""
         <div style="display: flex; align-items: center; margin-bottom: 2px;">
             <div style="width: 8px; height: 8px; border-radius: 50%; background-color: #28a745; margin-right: 6px; box-shadow: 0 0 4px #28a745;"></div>
-            <h3 style="margin: 0; font-size: 12px; color: #1b3834;">Painel de Operações</h3>
+            <h3 style="margin: 0; font-size: 11px; color: #1b3834;">Painel de Operações</h3>
         </div>
-        <p style="font-size: 10px; color: #28a745; margin-top: 0px; margin-left: 14px; font-weight: bold; margin-bottom: 12px;">Sistema Apto para Uso</p>
+        <p style="font-size: 10px; color: #28a745; margin-top: 0px; margin-left: 14px; font-weight: bold; margin-bottom: 14px;">Sistema Apto para Uso</p>
     """, unsafe_allow_html=True)
-    
-    st.markdown("<p style='font-size: 10px; color: #666; font-weight: bold; margin-bottom: 3px; text-transform: uppercase;'>Navegação</p>", unsafe_allow_html=True)
-    
-    if st.button("📦 Automação de Packing List", use_container_width=True):
-        st.session_state.pagina_atual = "automacao"
-        st.rerun()
-    if st.button("⚖️ Cruzamento NEWSE x PACKING", use_container_width=True):
-        st.session_state.pagina_atual = "cruzamento"
-        st.rerun()
-    if st.button("📧 Gerador de E-mail (GR)", use_container_width=True):
-        st.session_state.pagina_atual = "email"
-        st.rerun()
 
-    st.write("") 
+    st.markdown("<p style='font-size: 10px; color: #94a3ab; font-weight: 700; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.6px;'>Navegação</p>", unsafe_allow_html=True)
+
+    bloqueado = st.session_state.alocacao_pendente
+    paginas_menu = [
+        ("automacao", "📦  Automação de Packing List"),
+        ("cruzamento", "⚖️  Cruzamento NEWSE x PACKING"),
+        ("email", "📧  Gerador de E-mail (GR)"),
+    ]
+    for chave, rotulo in paginas_menu:
+        ativa = st.session_state.pagina_atual == chave
+        if st.button(
+            rotulo,
+            use_container_width=True,
+            type="primary" if ativa else "secondary",
+            disabled=(bloqueado and not ativa),
+            key=f"nav_{chave}",
+        ):
+            st.session_state.pagina_atual = chave
+            st.rerun()
+
+    if bloqueado:
+        st.caption("🔒 Finalize a baixa em andamento (preencha o DEL# e confirme) para liberar a navegação.")
+
+    st.write("")
 
     raw_tt = len(df_estoque[df_estoque['Descricao_Clean'].str.contains("TEMPTALE", na=False)]) if df_estoque is not None else 0
     raw_ta_amb = len(df_estoque[df_estoque['Descricao_Clean'].str.contains("TAGALERT 15-25", na=False)]) if df_estoque is not None else 0
     raw_ta_ref = len(df_estoque[df_estoque['Descricao_Clean'].str.contains("TAGALERT 2-8", na=False)]) if df_estoque is not None else 0
 
     st.markdown(f"""
-        <div style="font-size: 11px; color: #4a5568; margin-top: 5px; margin-bottom: 5px; line-height: 1.4; background-color: #f4f7f6; padding: 8px; border-radius: 4px; border-left: 3px solid #e59235;">
-            <b style="font-size: 10px; color: #1b3834;">LOGGERS DISPONÍVEIS:</b><br>
-            Tag Alert Ambiente: <b style="color: #209b7c; font-size: 12px; float: right;">{raw_ta_amb}</b><br>
-            Tag Alert Refrigerado: <b style="color: #209b7c; font-size: 12px; float: right;">{raw_ta_ref}</b><br>
-            TempTale Ambiente: <b style="color: #209b7c; font-size: 12px; float: right;">{raw_tt}</b>
+        <div style="font-size: 11px; color: #4a5568; margin-top: 5px; margin-bottom: 5px; line-height: 1.6; background-color: #ffffff; padding: 12px 14px; border-radius: 10px; border: 1px solid #dde6e3; border-left: 4px solid #e59235; box-shadow: 0 2px 8px rgba(18,48,44,0.05);">
+            <b style="font-size: 10px; color: #1b3834; letter-spacing: 0.4px;">LOGGERS DISPONÍVEIS</b><br>
+            <div style="display:flex; justify-content:space-between; margin-top:6px;"><span>Tag Alert Ambiente</span><b style="color: #209b7c;">{raw_ta_amb}</b></div>
+            <div style="display:flex; justify-content:space-between;"><span>Tag Alert Refrigerado</span><b style="color: #209b7c;">{raw_ta_ref}</b></div>
+            <div style="display:flex; justify-content:space-between;"><span>TempTale Ambiente</span><b style="color: #209b7c;">{raw_tt}</b></div>
         </div>
     """, unsafe_allow_html=True)
 
 def card_metrica(titulo, valor):
     return f"""
-    <div style="background-color: #ffffff; padding: 12px 15px; border-radius: 6px; border: 1px solid #e0e6ed; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
-        <p style="margin: 0; font-size: 11px; color: #718096; font-weight: bold; text-transform: uppercase;">{titulo}</p>
-        <p style="margin: 4px 0 0 0; font-size: 16px; color: #1b3834; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{valor}">{valor}</p>
+    <div style="background-color: #ffffff; padding: 14px 16px; border-radius: 10px; border: 1px solid #dde6e3; border-top: 3px solid #209b7c; box-shadow: 0 2px 8px rgba(18,48,44,0.05);">
+        <p style="margin: 0; font-size: 10px; color: #94a3ab; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">{titulo}</p>
+        <p style="margin: 5px 0 0 0; font-size: 17px; color: #1b3834; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{valor}">{valor}</p>
     </div>
     """
 
@@ -217,7 +307,7 @@ def card_metrica(titulo, valor):
 if st.session_state.pagina_atual == "automacao":
     
     st.markdown("""
-        <div style="background-color: #1b3834; padding: 18px 25px; border-radius: 6px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
             <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">📦 Automação de Packing List (SLA e Estoque)</h2>
             <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
                 Faça o upload do <b>Packing List (PDF)</b> para extração imediata de dados. O sistema realiza a sugestão automática de <b>ativos logísticos</b>,<br> cálculo exato do <b>SLA de entrega</b> (considerando dias úteis) e a <b>baixa de estoque ao vivo na planilha</b>.
@@ -265,6 +355,9 @@ if st.session_state.pagina_atual == "automacao":
         tem_tagalert_ref = "TAGALERT" in texto_upper and ("2-8" in texto_upper or "REFRIGER" in texto_upper or "36-46F" in texto_upper)
         tem_tagalert_amb = "TAGALERT" in texto_upper and ("20-25" in texto_upper or "15-25" in texto_upper or "2-30C" in texto_upper or not tem_tagalert_ref)
 
+        CITOTOXICOS = ["BORTEZOMIB", "SPRYCEL", "DASATINIB", "PACLITAXEL", "TAXOL", "CYCLOPHOSPHAMIDE", "CICLOFOSFAMIDA"]
+        tem_citotoxico = any(c in texto_upper for c in CITOTOXICOS)
+
         cidade_destino = "NÃO IDENTIFICADA"
         linhas = texto_upper.split('\n')
         for i, linha in enumerate(linhas):
@@ -284,81 +377,139 @@ if st.session_state.pagina_atual == "automacao":
         st.write("") 
 
         st.markdown("### 📦 Separação e Baixa de Estoque")
-        ids_utilizados = []
-        
-        if df_estoque is not None and not df_estoque.empty:
-            df_estoque_temp = df_estoque.copy()
-            def allocate_logger(nome_busca, label):
-                filtro = df_estoque_temp[
-                    df_estoque_temp['Descricao_Clean'].str.contains(nome_busca, na=False)
-                ]
-                if not filtro.empty:
-                    item = filtro.iloc[0]
-                    df_estoque_temp.drop(item.name, inplace=True)
-                    
-                    serie = next((str(item[c]) for c in item.index if "SERIE" in c.upper() or "SÉRIE" in c.upper()), str(item.iloc[7]) if len(item)>7 else "N/A")
-                    ids_utilizados.append({
-                        "label": label,
-                        "palete": str(item.get('Palete', 'N/A')).strip(),
-                        "id_est": str(item.get('Identificacao Estoque', item.get('Identificacao Estoque', 'N/A'))).strip(),
-                        "serie": serie
-                    })
-                    st.info(f"**{label}** alocado ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')} | Série: {serie}")
-                else: 
-                    st.warning(f"⚠️ **{label}**: Sem saldo disponível no estoque!")
 
-            if tem_temptale: allocate_logger("TEMPTALE", "TempTale Ambiente")
-            if tem_tagalert_amb: allocate_logger("TAGALERT 15-25", "Tag Alert Ambiente")
-            if tem_tagalert_ref: allocate_logger("TAGALERT 2-8", "Tag Alert Refrigerado")
+        # Identidade estável deste upload — usada para lembrar se a baixa
+        # já foi registrada para ESTE arquivo específico (evita duplicar
+        # a alocação/baixa se a página recarregar com o mesmo PDF ainda anexado).
+        arquivo_id = getattr(arquivo_pdf, "file_id", None) or f"{arquivo_pdf.name}_{arquivo_pdf.size}"
+        registro_existente = st.session_state.baixas_registradas.get(arquivo_id)
 
-            col_del, col_btn = st.columns([2, 1])
-            with col_del: delivery_number = st.text_input("DEL# (Delivery Number) para registro:")
-            with col_btn: 
-                st.write("")
-                if st.button("💾 Executar Baixa no Estoque", use_container_width=True):
-                    if not delivery_number: 
-                        st.error("❌ Preencha o DEL#.")
+        if registro_existente:
+            st.session_state.alocacao_pendente = False
+            ids_utilizados = registro_existente["itens"]
+            st.success(
+                f"✅ Baixa já registrada para este Packing List — **DEL# {registro_existente['delivery_number']}** "
+                f"em {registro_existente['data_uso']}."
+            )
+            for p in ids_utilizados:
+                st.markdown(f"- **{p['label']}** ➔ Palete: {p['palete']} | ID: {p['id_est']} | Série: {p['serie']}")
+            st.caption("Para dar baixa em um novo envio, envie um novo arquivo PDF acima.")
+        else:
+            ids_utilizados = []
+
+            if df_estoque is not None and not df_estoque.empty:
+                df_estoque_temp = df_estoque.copy()
+                def allocate_logger(nome_busca, label):
+                    filtro = df_estoque_temp[
+                        df_estoque_temp['Descricao_Clean'].str.contains(nome_busca, na=False)
+                    ]
+                    if not filtro.empty:
+                        item = filtro.iloc[0]
+                        df_estoque_temp.drop(item.name, inplace=True)
+
+                        serie = next((str(item[c]) for c in item.index if "SERIE" in c.upper() or "SÉRIE" in c.upper()), str(item.iloc[7]) if len(item)>7 else "N/A")
+                        ids_utilizados.append({
+                            "label": label,
+                            "palete": str(item.get('Palete', 'N/A')).strip(),
+                            "id_est": str(item.get('Identificacao Estoque', item.get('Identificacao Estoque', 'N/A'))).strip(),
+                            "serie": serie
+                        })
+                        st.info(f"**{label}** alocado ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')} | Série: {serie}")
                     else:
-                        webhook_url = st.secrets.get(
-                            "WEBHOOK_BAIXA_ESTOQUE",
-                            "https://script.google.com/macros/s/AKfycbzpwZC2LW7PQ1JGMkJIZD3Rxd4nv4pfEZ1QS1D9jDxQbt4Qf2hiCmv9dJ8pAJnBHJglug/exec"
-                        )
+                        st.warning(f"⚠️ **{label}**: Sem saldo disponível no estoque!")
 
-                        for p in ids_utilizados:
-                            st.session_state.seriais_consumidos.add(str(p["serie"]).strip())
-                            st.session_state.ids_consumidos.add(str(p["id_est"]).strip())
-                        
-                        payload = {
-                            "data_uso": datetime.today().strftime('%d/%m/%Y'),
-                            "delivery_number": delivery_number,
-                            "estudo": estudo_encontrado,
-                            "te": te_resultado,
-                            "cidade_destino": cidade_destino,
-                            "itens": [
-                                {
-                                    "tipo": p["label"],
-                                    "palete": p["palete"],
-                                    "id_est": p["id_est"],
-                                    "serie": p["serie"]
-                                } for p in ids_utilizados
-                            ]
-                        }
-                        
-                        try:
-                            req = urllib.request.Request(
-                                webhook_url,
-                                data=json.dumps(payload).encode('utf-8'),
-                                headers={'Content-Type': 'application/json'}
+                if tem_temptale: allocate_logger("TEMPTALE", "TempTale Ambiente")
+                if tem_tagalert_amb: allocate_logger("TAGALERT 15-25", "Tag Alert Ambiente")
+                if tem_tagalert_ref: allocate_logger("TAGALERT 2-8", "Tag Alert Refrigerado")
+
+                if tem_citotoxico:
+                    st.markdown(
+                        "<div style='font-size:12px; color:#92400e; background:#fff7ed; border:1px solid #fdba74; "
+                        "border-radius:6px; padding:6px 10px; margin:6px 0;'>🧪 Medicação citotóxica identificada "
+                        "— por regra, essa carga segue em caixa separada e precisa de um TempTale adicional.</div>",
+                        unsafe_allow_html=True
+                    )
+                    allocate_logger("TEMPTALE", "TempTale Extra (Citotóxico – Caixa Separada)")
+
+                # Enquanto houver itens alocados e a baixa ainda não foi confirmada,
+                # trava a navegação para outras páginas (ver barra lateral).
+                st.session_state.alocacao_pendente = bool(ids_utilizados)
+
+                if ids_utilizados:
+                    st.markdown(
+                        "<div class='drs-alerta-pendente'>⚠️ Alocação pendente de confirmação — preencha o DEL# "
+                        "e clique em <b>Executar Baixa no Estoque</b> antes de sair desta página, "
+                        "ou os itens acima podem ser usados por outra pessoa.</div>",
+                        unsafe_allow_html=True
+                    )
+                    components.html(
+                        "<script>window.parent.onbeforeunload = function(e){ e.preventDefault(); e.returnValue = ''; return ''; };</script>",
+                        height=0
+                    )
+                else:
+                    components.html("<script>window.parent.onbeforeunload = null;</script>", height=0)
+
+                col_del, col_btn = st.columns([2, 1])
+                with col_del: delivery_number = st.text_input("DEL# (Delivery Number) para registro:")
+                with col_btn:
+                    st.write("")
+                    if st.button("💾 Executar Baixa no Estoque", use_container_width=True):
+                        if not delivery_number:
+                            st.error("❌ Preencha o DEL#.")
+                        else:
+                            webhook_url = st.secrets.get(
+                                "WEBHOOK_BAIXA_ESTOQUE",
+                                "https://script.google.com/macros/s/AKfycbzpwZC2LW7PQ1JGMkJIZD3Rxd4nv4pfEZ1QS1D9jDxQbt4Qf2hiCmv9dJ8pAJnBHJglug/exec"
                             )
-                            urllib.request.urlopen(req, timeout=25)
-                            
-                            st.cache_data.clear()
-                            st.success(f"✅ Baixa executada com sucesso! Itens removidos do estoque ativo.")
-                            time.sleep(2)
-                            st.rerun() 
-                        except Exception as ex:
-                            st.error(f"Erro ao atualizar planilha: {ex}")
-        
+
+                            payload = {
+                                "data_uso": datetime.today().strftime('%d/%m/%Y'),
+                                "delivery_number": delivery_number,
+                                "estudo": estudo_encontrado,
+                                "te": te_resultado,
+                                "cidade_destino": cidade_destino,
+                                "itens": [
+                                    {
+                                        "tipo": p["label"],
+                                        "palete": p["palete"],
+                                        "id_est": p["id_est"],
+                                        "serie": p["serie"]
+                                    } for p in ids_utilizados
+                                ]
+                            }
+
+                            try:
+                                req = urllib.request.Request(
+                                    webhook_url,
+                                    data=json.dumps(payload).encode('utf-8'),
+                                    headers={'Content-Type': 'application/json'}
+                                )
+                                urllib.request.urlopen(req, timeout=25)
+
+                                # Só marca os itens como consumidos (some da visão de todo mundo)
+                                # e só trava o arquivo como "já processado" DEPOIS de confirmar
+                                # que a planilha central foi atualizada com sucesso.
+                                for p in ids_utilizados:
+                                    st.session_state.seriais_consumidos.add(str(p["serie"]).strip())
+                                    st.session_state.ids_consumidos.add(str(p["id_est"]).strip())
+
+                                st.session_state.baixas_registradas[arquivo_id] = {
+                                    "delivery_number": delivery_number,
+                                    "itens": ids_utilizados,
+                                    "data_uso": datetime.today().strftime('%d/%m/%Y %H:%M'),
+                                }
+                                st.session_state.alocacao_pendente = False
+
+                                st.cache_data.clear()
+                                itens_txt = ", ".join([p["label"] for p in ids_utilizados])
+                                st.success(f"✅ Baixa executada com sucesso! DEL# **{delivery_number}** usado para: {itens_txt}.")
+                                time.sleep(2)
+                                st.rerun()
+                            except Exception as ex:
+                                st.error(f"Erro ao atualizar planilha: {ex}")
+            else:
+                st.warning("⚠️ Estoque indisponível no momento — não é possível alocar loggers automaticamente.")
+
         st.markdown("### 📋 Dados para Restrição e Particularidades")
         val_depositante = "056998982001260"
         val_palete = " | ".join([p["palete"] for p in ids_utilizados]) or "N/A"
@@ -458,7 +609,7 @@ if st.session_state.pagina_atual == "automacao":
 elif st.session_state.pagina_atual == "cruzamento":
     
     st.markdown("""
-        <div style="background-color: #1b3834; padding: 18px 25px; border-radius: 6px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
             <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">⚖️ Assistente de Conferência - Validação de Remessa</h2>
             <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
                 Aja como a 'Assistente de Conferência'. Analise o texto do Shipment e da Solicitação fornecidos.<br>
@@ -664,7 +815,7 @@ elif st.session_state.pagina_atual == "cruzamento":
 elif st.session_state.pagina_atual == "email":
 
     st.markdown("""
-        <div style="background-color: #1b3834; padding: 18px 25px; border-radius: 6px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
             <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">📧 Gerador de E-mail (GR)</h2>
             <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
                 Módulo em construção.
