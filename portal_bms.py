@@ -1,5 +1,5 @@
 import streamlit as st
-import PyPDF2
+from pypdf import PdfReader
 import pandas as pd
 from datetime import datetime, timedelta
 import streamlit.components.v1 as components
@@ -7,6 +7,14 @@ import re
 import urllib.request
 import json
 import time
+
+
+def extrair_texto_pdf(leitor, separador=""):
+    """Extrai o texto de todas as páginas de um PDF.
+    Ignora páginas sem texto extraível (ex: PDFs escaneados/imagem),
+    o que evita que o app quebre com um upload inesperado."""
+    return separador.join([(pagina.extract_text() or "") for pagina in leitor.pages])
+
 
 # --- CONFIGURAÇÕES DA PÁGINA (SaaS Logístico - Wide) ---
 st.set_page_config(page_title="DRS Group | BMS Operations", layout="wide", page_icon="🏢")
@@ -63,9 +71,20 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- SISTEMA DE AUTENTICAÇÃO ---
+SENHA_ACESSO = st.secrets.get("SENHA_ACESSO")
+
+if not SENHA_ACESSO:
+    st.error(
+        "⚠️ O acesso ainda não foi configurado. Peça ao administrador para "
+        "definir o secret **SENHA_ACESSO** nas configurações do app no "
+        "Streamlit Community Cloud (menu do app → Settings → Secrets)."
+    )
+    st.stop()
+
+
 def verificar_senha():
     def senha_inserida():
-        if st.session_state["password_input"] == st.secrets.get("SENHA_ACESSO", "bms2026"):
+        if st.session_state["password_input"] == SENHA_ACESSO:
             st.session_state["password_correta"] = True
             del st.session_state["password_input"]
         else:
@@ -99,26 +118,31 @@ if "ids_consumidos" not in st.session_state:
 # --- CARREGAR DADOS E ESTOQUE ---
 @st.cache_data(ttl=1)
 def carregar_dados_sheets():
-    id_estoque = "10f18RZ-48HiJS2HckG6Siw2WRE9zz92_Pj6chkTwXik"
-    id_loggers = "1ztZC3s0kKINJLNOR-BEYUUFjycxSVT7NMGVNWdxWh98"
-    
+    id_estoque = st.secrets.get("ID_PLANILHA_ESTOQUE", "10f18RZ-48HiJS2HckG6Siw2WRE9zz92_Pj6chkTwXik")
+    id_loggers = st.secrets.get("ID_PLANILHA_LOGGERS", "1ztZC3s0kKINJLNOR-BEYUUFjycxSVT7NMGVNWdxWh98")
+
     cb = int(time.time())
     url_estoque = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv&cb={cb}"
     url_tes = f"https://docs.google.com/spreadsheets/d/{id_loggers}/export?format=csv&gid=536812026&cb={cb}"
-    
+
     try: df_est = pd.read_csv(url_estoque)
     except: df_est = None
-    
-    if df_est is not None: 
-        df_est['Descricao_Clean'] = df_est['Descricao'].astype(str).str.upper()
-        
-        col_serie_est = next((c for c in df_est.columns if "SERIE" in c.upper() or "SÉRIE" in c.upper()), None)
-        col_id_est = next((c for c in df_est.columns if "IDENTIFICACAO" in c.upper() or "ID" in c.upper()), None)
-        
-        if col_serie_est and st.session_state.seriais_consumidos:
-            df_est = df_est[~df_est[col_serie_est].astype(str).str.strip().isin(st.session_state.seriais_consumidos)]
-        if col_id_est and st.session_state.ids_consumidos:
-            df_est = df_est[~df_est[col_id_est].astype(str).str.strip().isin(st.session_state.ids_consumidos)]
+
+    if df_est is not None:
+        try:
+            df_est['Descricao_Clean'] = df_est['Descricao'].astype(str).str.upper()
+
+            col_serie_est = next((c for c in df_est.columns if "SERIE" in c.upper() or "SÉRIE" in c.upper()), None)
+            col_id_est = next((c for c in df_est.columns if "IDENTIFICACAO" in c.upper() or "ID" in c.upper()), None)
+
+            if col_serie_est and st.session_state.seriais_consumidos:
+                df_est = df_est[~df_est[col_serie_est].astype(str).str.strip().isin(st.session_state.seriais_consumidos)]
+            if col_id_est and st.session_state.ids_consumidos:
+                df_est = df_est[~df_est[col_id_est].astype(str).str.strip().isin(st.session_state.ids_consumidos)]
+        except Exception:
+            # Nome de coluna mudou na planilha (ex: "Descricao" -> "Descrição"):
+            # evita derrubar o app inteiro para todo mundo, só desativa o estoque.
+            df_est = None
 
     try:
         df_tes = pd.read_csv(url_tes)
@@ -220,8 +244,8 @@ if st.session_state.pagina_atual == "automacao":
     with col_data: data_recebimento = st.date_input("Data de Recebimento", datetime.today())
 
     if arquivo_pdf is not None:
-        leitor = PyPDF2.PdfReader(arquivo_pdf)
-        texto_upper = "".join([p.extract_text() for p in leitor.pages]).upper()
+        leitor = PdfReader(arquivo_pdf)
+        texto_upper = extrair_texto_pdf(leitor).upper()
 
         estudo_encontrado = "NÃO IDENTIFICADO"
         match_protocolo = re.search(r"PROTOCOL\s*NUMBER\s*[:\s]*([A-Z0-9\-\/]+)", texto_upper)
@@ -294,9 +318,12 @@ if st.session_state.pagina_atual == "automacao":
                 if st.button("💾 Executar Baixa no Estoque", use_container_width=True):
                     if not delivery_number: 
                         st.error("❌ Preencha o DEL#.")
-                    else: 
-                        webhook_url = "https://script.google.com/macros/s/AKfycbzpwZC2LW7PQ1JGMkJIZD3Rxd4nv4pfEZ1QS1D9jDxQbt4Qf2hiCmv9dJ8pAJnBHJglug/exec"
-                        
+                    else:
+                        webhook_url = st.secrets.get(
+                            "WEBHOOK_BAIXA_ESTOQUE",
+                            "https://script.google.com/macros/s/AKfycbzpwZC2LW7PQ1JGMkJIZD3Rxd4nv4pfEZ1QS1D9jDxQbt4Qf2hiCmv9dJ8pAJnBHJglug/exec"
+                        )
+
                         for p in ids_utilizados:
                             st.session_state.seriais_consumidos.add(str(p["serie"]).strip())
                             st.session_state.ids_consumidos.add(str(p["id_est"]).strip())
@@ -460,13 +487,13 @@ elif st.session_state.pagina_atual == "cruzamento":
         if st.button("Executar Conferência Estritamente", use_container_width=True):
             with st.spinner("Processando documentos e auditando campos..."):
                 try:
-                    leitor_sol = PyPDF2.PdfReader(arquivo_sol)
-                    texto_sol = " ".join([p.extract_text() for p in leitor_sol.pages])
+                    leitor_sol = PdfReader(arquivo_sol)
+                    texto_sol = extrair_texto_pdf(leitor_sol, " ")
                     texto_sol_upper = texto_sol.upper()
                     texto_sol_limpo = re.sub(r'\s+', ' ', texto_sol)
-                    
-                    leitor_packing = PyPDF2.PdfReader(arquivo_packing)
-                    texto_packing = " ".join([p.extract_text() for p in leitor_packing.pages])
+
+                    leitor_packing = PdfReader(arquivo_packing)
+                    texto_packing = extrair_texto_pdf(leitor_packing, " ")
                     texto_packing_upper = texto_packing.upper()
                     texto_packing_limpo = re.sub(r'\s+', ' ', texto_packing)
 
@@ -630,3 +657,19 @@ elif st.session_state.pagina_atual == "cruzamento":
 
                 except Exception as e:
                     st.error(f"Erro na execução da conferência: {e}")
+
+# ==========================================
+# PÁGINA: GERADOR DE E-MAIL (GR)
+# ==========================================
+elif st.session_state.pagina_atual == "email":
+
+    st.markdown("""
+        <div style="background-color: #1b3834; padding: 18px 25px; border-radius: 6px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">📧 Gerador de E-mail (GR)</h2>
+            <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
+                Módulo em construção.
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    st.info("🚧 Este módulo ainda não foi implementado. Assim que as regras do e-mail de GR forem definidas, esta página passa a gerar o texto automaticamente, como as demais.")
