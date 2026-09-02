@@ -1246,50 +1246,172 @@ elif st.session_state.pagina_atual == "cruzamento":
                     st.error(f"Erro na execução da conferência: {e}")
 
 # ==========================================
-# PÁGINA: CONFERÊNCIA DE AGENDAMENTO (Pedido x NEWSE x Agendamento x Minuta)
+# PÁGINA: CONFERÊNCIA DE AGENDAMENTO (Packing List x NEWSE x Agendamento x Minuta)
 # ==========================================
 # Portado do painel "Validador DRS Group - Logística" (artifact separado do
-# usuário) para dentro do Portal BMS, como uma aba própria. Mantém os mesmos
-# 3 estágios, os mesmos campos e a mesma lógica de aprovação/reprovação do
-# painel original — só a extração de texto do PDF passou a usar a função
-# extrair_texto_pdf (pypdf) já usada no resto do portal, em vez de pdfplumber,
-# para não precisar adicionar uma biblioteca nova só para esta página.
+# usuário) para dentro do Portal BMS, como uma aba própria — e reescrito para
+# fazer conferência DE VERDADE campo a campo (a versão original só mostrava
+# "Verificado no Portal" fixo, sem checar nada de fato). Mantém os mesmos 3
+# estágios do painel original, mas agora cada campo é extraído dos dois
+# documentos e comparado de verdade, com o valor de cada lado sempre visível
+# na tela — nunca só "Verificar PDF".
 elif st.session_state.pagina_atual == "conferencia_agendamento":
 
     st.markdown("""
         <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #6d28d9; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">🧾 Conferência de Agendamento — Pedido, NEWSE, Agendamento e Minuta</h2>
+            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">🧾 Conferência de Agendamento — Packing List, NEWSE, Agendamento e Minuta</h2>
             <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
-                Auditoria estruturada campo a campo, em 3 etapas: <b>Pedido do Cliente x NEWSE</b>, <b>NEWSE x Agendamento</b>
-                e <b>Auditoria Final com a Minuta de Envio (SC)</b>.
+                Auditoria estruturada campo a campo, em 3 etapas: <b>Packing List x NEWSE</b>, <b>NEWSE x Agendamento</b>
+                e <b>Auditoria Final com a Minuta de Envio (SC)</b>. Todo campo comparado mostra o valor extraído dos dois
+                documentos lado a lado — nada fica marcado como correto sem ter sido checado de fato.
             </p>
         </div>
     """, unsafe_allow_html=True)
 
     def extrair_texto_pdf_conferencia(arquivo):
         """Mesma extração usada no resto do portal (pypdf), mas mantendo uma
-        quebra de linha entre páginas — os regex desta página (herdados do
-        painel original) dependem de '\\n' para não vazar de uma linha para
-        a próxima (ex: capturar um endereço inteiro e parar no fim da linha)."""
+        quebra de linha entre páginas — os regex desta página dependem de
+        '\\n' para não vazar de uma linha para a próxima."""
         leitor_conf = PdfReader(arquivo)
         return extrair_texto_pdf(leitor_conf, separador="\n")
 
+    def normalizar_alfanum(t):
+        """Maiúsculo e só letras/dígitos — remove espaço, hífen, barra, ponto
+        etc. Usado para achar um Lote dentro do texto da NEWSE mesmo quando a
+        extração do PDF grudou/quebrou a formatação original (comum em
+        tabelas de PDF)."""
+        return re.sub(r"[^A-Z0-9]", "", str(t).upper())
+
+    def so_digitos(t):
+        return re.sub(r"\D", "", str(t))
+
+    def extrair_lista_contatos(texto_bruto):
+        """Recebe um bloco de texto bruto (pode ter quebras de linha no meio
+        dos nomes) e devolve uma lista de nomes limpos, separados por '/'."""
+        texto_limpo = re.sub(r"\s+", " ", str(texto_bruto)).strip()
+        nomes = []
+        for parte in texto_limpo.split("/"):
+            parte = parte.strip()
+            m = re.match(r"^([A-Za-zÀ-ÿ\s\.]+)", parte)
+            nome = m.group(1).strip() if m else parte
+            if nome:
+                nomes.append(nome)
+        return nomes
+
+    def comparar_listas_nomes(lista_a, texto_b_bruto):
+        """Confere se cada nome da lista_a aparece no texto_b_bruto. Compara
+        com TODOS os espaços removidos dos dois lados (além de acento/caixa)
+        porque alguns PDFs (ex: a Minuta) têm um artefato de fonte que insere
+        um espaço extra no meio de palavras ("V itoria", "CONT ATO") — sem
+        isso, esses nomes apareceriam como falsa divergência."""
+        texto_b_normalizado = re.sub(r"\s+", "", remover_acentos(str(texto_b_bruto).upper()))
+        encontrados, faltando = [], []
+        for nome in lista_a:
+            nome_normalizado = re.sub(r"\s+", "", remover_acentos(nome.upper()))
+            if nome_normalizado and nome_normalizado in texto_b_normalizado:
+                encontrados.append(nome)
+            else:
+                faltando.append(nome)
+        return encontrados, faltando
+
+    MESES_CONF = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
+                  "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12}
+
+    def data_para_iso(data_str):
+        """Converte '31-AUG-2028' (formato do Packing List) -> '2028-08-31'
+        (formato usado na NEWSE). Devolve None se não reconhecer o formato."""
+        m = re.match(r"(\d{1,2})-([A-Za-z]{3})-(\d{4})", str(data_str).strip())
+        if not m:
+            return None
+        dia, mes_txt, ano = m.groups()
+        mes = MESES_CONF.get(mes_txt.upper())
+        if not mes:
+            return None
+        return f"{ano}-{mes:02d}-{int(dia):02d}"
+
+    def extrair_itens_packing(texto):
+        """Extrai cada item de produto da Packing List: Material, Batch
+        (Lote), Quantity, Use Date (Validade) e a lista de números de série —
+        a partir do bloco 'Shipping Information' (Material Batch Quantity Use
+        Date / Serial No. (...))."""
+        itens = []
+        padrao_item = re.compile(
+            r"(\d{5,8})\s+([A-Z0-9\.\-]+)\s+(\d+)\s*EA\s+(\d{1,2}-[A-Z]{3}-\d{4})",
+            re.IGNORECASE,
+        )
+        matches = list(padrao_item.finditer(texto))
+        for i, m in enumerate(matches):
+            material, lote, qtd, validade = m.groups()
+            bloco = texto[m.end(): matches[i + 1].start() if i + 1 < len(matches) else len(texto)]
+            nome_match = re.match(r"\s*([^\n]+)", bloco)
+            nome = nome_match.group(1).strip() if nome_match else "NÃO IDENTIFICADO"
+            serial_match = re.search(r"Serial\s*No\.?\s*\(([^)]+)\)", bloco, re.IGNORECASE)
+            seriais = [s.strip() for s in serial_match.group(1).split(",")] if serial_match else []
+            itens.append({
+                "material": material,
+                "lote": lote,
+                "quantidade": int(qtd),
+                "validade": validade.upper(),
+                "validade_iso": data_para_iso(validade),
+                "nome": nome,
+                "seriais": seriais,
+            })
+        return itens
+
+    def extrair_seriais_produtos_newse(texto_newse_bruto):
+        """Lê a tabela 'Produto(s)' da NEWSE e devolve um dicionário
+        serial -> [validades associadas a ele]. A extração de PDF grudona
+        Nome+Lote+Validade+Série numa sequência contínua de caracteres sem
+        separador confiável entre eles (ex: 'ADE45722028-08-31145783AREA') —
+        por isso, em vez de tentar separar essas colunas, a técnica aqui
+        procura, em toda a tabela normalizada (só letras/dígitos), o padrão
+        <data no formato AAAAMMDD><dígitos do serial>, sempre imediatamente
+        seguido de 'AREA' ou 'CAMARA' (a área de armazenamento que a NEWSE
+        sempre imprime logo depois da série de cada produto). Isso funciona
+        mesmo com o Lote grudado na frente da data, porque só uma posição de
+        início permite que a data (8 dígitos) e a série (o resto) encaixem
+        exatamente até 'AREA'/'CAMARA' — testado com um documento NEWSE real."""
+        bloco = texto_newse_bruto.split("Produto(s)")[-1]
+        if "Observações" in bloco:
+            bloco = bloco.split("Observações")[0]
+        bloco_normalizado = normalizar_alfanum(bloco)
+        padrao = re.compile(r"(20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))(\d{4,8})(?=AREA|CAMARA)")
+        mapa_serial_para_validades = {}
+        for m in padrao.finditer(bloco_normalizado):
+            data_compacta, serial = m.groups()
+            data_iso = f"{data_compacta[:4]}-{data_compacta[4:6]}-{data_compacta[6:]}"
+            mapa_serial_para_validades.setdefault(serial, []).append(data_iso)
+        return mapa_serial_para_validades, bloco_normalizado
+
+    def linha_conferencia(campo, valor_a, valor_b, ok, obs_ok, obs_divergente):
+        """Renderiza uma linha da tabela de conferência (campo, valor de cada
+        lado e status) e devolve se ela está OK — sempre mostrando os dois
+        valores extraídos, nunca um texto fixo tipo 'Verificado no Portal'."""
+        c1, c2, c3, c4 = st.columns([2.3, 2.2, 2.2, 1.6])
+        c1.write(f"**{campo}**")
+        c2.text(valor_a if valor_a else "—")
+        c3.text(valor_b if valor_b else "—")
+        c4.markdown("✅ Conforme" if ok else "❌ Divergência")
+        st.caption(obs_ok if ok else obs_divergente)
+        st.markdown("---")
+        return ok
+
     tab_conf1, tab_conf2, tab_conf3 = st.tabs([
-        "Etapa 1: Pedido x NEWSE",
+        "Etapa 1: Packing List x NEWSE",
         "Etapa 2: NEWSE x Agendamento",
         "Etapa 3: Auditoria Final (Minuta)",
     ])
 
     # ---------------------------------------------------------
-    # ETAPA 1: PEDIDO DO CLIENTE X NEWSE
+    # ETAPA 1: PACKING LIST X NEWSE
     # ---------------------------------------------------------
     with tab_conf1:
-        st.markdown("#### Etapa 1: Validação de Raiz (Pedido do Cliente x NEWSE)")
-        st.caption("Confronto estruturado campo a campo entre o Pedido do Cliente e a NEWSE.")
+        st.markdown("#### Etapa 1: Validação de Raiz (Packing List x NEWSE)")
+        st.caption("Confronto estruturado campo a campo entre a Packing List e a NEWSE.")
 
         col1, col2 = st.columns(2)
         with col1:
-            pedido_file = st.file_uploader("Arraste o Pedido do Cliente (PDF)", type=["pdf"], key="conf_p_etapa1")
+            pedido_file = st.file_uploader("Arraste a Packing List (PDF)", type=["pdf"], key="conf_p_etapa1")
         with col2:
             newse_file_1 = st.file_uploader("Arraste a NEWSE (PDF)", type=["pdf"], key="conf_n_etapa1")
 
@@ -1298,68 +1420,146 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                 t_pedido = extrair_texto_pdf_conferencia(pedido_file)
                 t_newse = extrair_texto_pdf_conferencia(newse_file_1)
 
-                # Extração rigorosa de ordens
-                m_ordem_p = re.search(r'IWRS Shipment Number[:\s]*([0-9A-Za-z_-]+)', t_pedido, re.IGNORECASE)
-                m_ordem_n = re.search(r'Número da ordem[:\s]*([0-9A-Za-z_-]+)', t_newse, re.IGNORECASE)
+                checks_1 = []
 
-                ordem_p = m_ordem_p.group(1).strip() if m_ordem_p else "Não localizado"
-                ordem_n = m_ordem_n.group(1).strip() if m_ordem_n else "Não localizado"
+                # --- Delivery Number (Packing List) x Número da Ordem (NEWSE) ---
+                m_del_p = re.search(r"Delivery\s*number\s*:?\s*(\d+)", t_pedido, re.IGNORECASE)
+                del_p = m_del_p.group(1).strip() if m_del_p else "NÃO LOCALIZADO"
+                m_del_n = re.search(r"N[uú]mero da ordem\s*:?\s*(\d+)", t_newse, re.IGNORECASE)
+                del_n = m_del_n.group(1).strip() if m_del_n else "NÃO LOCALIZADO"
+                ok_delivery = del_p != "NÃO LOCALIZADO" and del_p == del_n
 
-                # Validação se as ordens batem exatamente
-                ordens_compativeis = (ordem_p == ordem_n) and (ordem_p != "Não localizado")
+                # --- Protocolo / Estudo ---
+                m_prot_p = re.search(r"Protocol number\s*:?\s*([A-Z0-9\-\/]+)", t_pedido, re.IGNORECASE)
+                prot_p_raw = m_prot_p.group(1) if m_prot_p else ""
+                m_prot_p2 = re.search(r"(CA\d+-\d+)", prot_p_raw.upper())
+                prot_p = m_prot_p2.group(1) if m_prot_p2 else (prot_p_raw or "NÃO LOCALIZADO")
+                m_prot_n = re.search(r"(CA\d+-\d+)", t_newse.upper())
+                prot_n = m_prot_n.group(1) if m_prot_n else "NÃO LOCALIZADO"
+                ok_protocolo = prot_p != "NÃO LOCALIZADO" and prot_p == prot_n
 
-                # Extrações de outros campos principais
-                m_inv_p = re.search(r'Investigador[:\s]*([^\n]+)', t_pedido, re.IGNORECASE)
-                m_resp_p = re.search(r'Responsável pelo recebimento[:\s]*([^\n\(]+)', t_pedido, re.IGNORECASE)
-                m_end_p = re.search(r'Endereço[:\s]*([^\n]+)', t_pedido, re.IGNORECASE)
+                # --- CEP de destino ---
+                bloco_shipto_packing = t_pedido.split("Ship To")[-1] if "Ship To" in t_pedido else t_pedido
+                m_cep_p = re.search(r"(\d{5}-?\d{3})", bloco_shipto_packing)
+                cep_p = m_cep_p.group(1).replace("-", "") if m_cep_p else "NÃO LOCALIZADO"
+                m_cep_n = re.search(r"CEP[^\d]*(\d{5}-?\d{3})", t_newse, re.IGNORECASE)
+                cep_n = m_cep_n.group(1).replace("-", "") if m_cep_n else "NÃO LOCALIZADO"
+                ok_cep = cep_p != "NÃO LOCALIZADO" and cep_p == cep_n
 
-                itens_etapa1 = [
-                    {"campo": "IWRS Shipment Number X Número da Ordem", "ped": ordem_p, "new": ordem_n, "ok": ordens_compativeis},
-                    {"campo": "Investigador x Médico Principal", "ped": m_inv_p.group(1).strip() if m_inv_p else "Verificar PDF", "new": "Verificado no Portal", "ok": True},
-                    {"campo": "Responsável X Pessoa Autorizada", "ped": m_resp_p.group(1).strip() if m_resp_p else "Verificar PDF", "new": "Verificado no Portal", "ok": True},
-                    {"campo": "Endereço de Destino", "ped": m_end_p.group(1).strip() if m_end_p else "Verificar PDF", "new": "Verificado no Portal", "ok": True},
-                ]
+                # --- Investigador: fonte é a NEWSE (campo bem identificado lá),
+                # e depois confere se o nome aparece no texto da Packing List ---
+                m_inv_n = re.search(
+                    r"Investigador\(es\) Principal\(is\) / M[eé]dico\(s\)\s*\n?Nome\s*\n?([^\n]+)",
+                    t_newse, re.IGNORECASE,
+                )
+                inv_n = m_inv_n.group(1).strip() if m_inv_n else "NÃO LOCALIZADO"
+                palavras_inv = [w for w in remover_acentos(inv_n.upper()).split() if len(w) >= 3]
+                packing_upper_noacc = remover_acentos(t_pedido.upper())
+                ok_investigador = bool(palavras_inv) and all(
+                    w in packing_upper_noacc for w in [palavras_inv[0], palavras_inv[-1]]
+                )
 
                 st.markdown("### 📋 Tabela de Conferência Analítica - Etapa 1")
-                aprovado_1 = True
+                checks_1.append(linha_conferencia(
+                    "Delivery Number x Número da Ordem", del_p, del_n, ok_delivery,
+                    "Números idênticos.",
+                    "Delivery Number da Packing List não bate com o Número da Ordem da NEWSE (ou não foi encontrado).",
+                ))
+                checks_1.append(linha_conferencia(
+                    "Protocolo / Estudo", prot_p, prot_n, ok_protocolo,
+                    "Protocolo idêntico nos dois documentos.",
+                    "Protocolo divergente ou não encontrado em um dos documentos.",
+                ))
+                checks_1.append(linha_conferencia(
+                    "CEP de Destino", cep_p, cep_n, ok_cep,
+                    "CEP de destino idêntico nos dois documentos.",
+                    "CEP de destino divergente ou não encontrado em um dos documentos.",
+                ))
+                checks_1.append(linha_conferencia(
+                    "Investigador (NEWSE) x Packing List", inv_n,
+                    "Encontrado no texto da Packing List" if ok_investigador else "NÃO encontrado no texto da Packing List",
+                    ok_investigador,
+                    "Nome do investigador da NEWSE localizado no texto da Packing List.",
+                    "Nome do investigador da NEWSE não foi localizado no texto da Packing List.",
+                ))
 
-                for item in itens_etapa1:
-                    status_txt = "✅ Correto" if item["ok"] else "❌ Divergente / Faltando"
-                    if not item["ok"]:
-                        aprovado_1 = False
+                # --- Confronto Detalhado: Dispositivos / Produtos ---
+                st.markdown("### 📦 Confronto Detalhado: Dispositivos / Produtos (PACKING x NEWSE)")
+                st.caption(
+                    "Material/Batch/Quantity/Use Date/Serial No. (Packing List) x "
+                    "Nome/Lote/Quantidade/Validade/Peça ou Série (NEWSE). O mais importante: "
+                    "se um número aparece no campo Peça OU no campo Série da NEWSE, já conta como correto."
+                )
 
-                    c1, c2, c3, c4 = st.columns([2.5, 2, 2, 1.5])
-                    c1.write(f"**{item['campo']}**")
-                    c2.text(item["ped"])
-                    c3.text(item["new"])
-                    c4.markdown(status_txt)
+                itens_packing = extrair_itens_packing(t_pedido)
+                mapa_serial_newse, bloco_produtos_newse_norm = extrair_seriais_produtos_newse(t_newse)
+
+                if not itens_packing:
+                    st.warning("⚠️ Não foi possível identificar os itens de produto na Packing List (formato não reconhecido — verifique manualmente pelos blocos de texto abaixo).")
+                    checks_1.append(False)
+
+                seriais_packing_todos = []
+                for item in itens_packing:
+                    seriais_packing_todos.extend(item["seriais"])
+                    lote_norm = normalizar_alfanum(item["lote"])
+                    lote_ok = lote_norm in bloco_produtos_newse_norm
+
+                    linhas_serial = []
+                    for s in item["seriais"]:
+                        datas_encontradas = mapa_serial_newse.get(s, [])
+                        encontrado = bool(datas_encontradas)
+                        validade_bate = encontrado and item["validade_iso"] in datas_encontradas
+                        linhas_serial.append((s, encontrado, validade_bate))
+
+                    qtd_ok = item["quantidade"] == len(item["seriais"])
+                    seriais_ok = bool(item["seriais"]) and all(v for _, _, v in linhas_serial)
+                    item_ok = lote_ok and qtd_ok and seriais_ok
+                    checks_1.append(item_ok)
+
+                    st.markdown(f"**{item['nome']}**  (Material {item['material']})")
+                    col_pk, col_nw = st.columns(2)
+                    with col_pk:
+                        st.markdown("📄 *Packing List*")
+                        st.text(f"Lote (Batch): {item['lote']}")
+                        st.text(f"Quantidade: {item['quantidade']}")
+                        st.text(f"Validade (Use Date): {item['validade']}")
+                        st.text(f"Peça/Série (Serial No.): {', '.join(item['seriais']) or 'N/A'}")
+                    with col_nw:
+                        st.markdown("📄 *NEWSE*")
+                        st.text(f"Lote encontrado: {'Sim' if lote_ok else 'NÃO ENCONTRADO'}")
+                        st.text(f"Quantidade de séries localizadas: {sum(1 for _, e, _ in linhas_serial if e)} de {item['quantidade']}")
+                        for s, encontrado, validade_bate in linhas_serial:
+                            if encontrado and validade_bate:
+                                st.text(f"✅ Peça/Série {s} — encontrada, validade confere")
+                            elif encontrado and not validade_bate:
+                                st.text(f"⚠️ Peça/Série {s} — encontrada, mas com validade diferente")
+                            else:
+                                st.text(f"❌ Peça/Série {s} — NÃO encontrada na NEWSE")
+                    st.markdown("✅ **Item conforme**" if item_ok else "❌ **Item com divergência**")
                     st.markdown("---")
 
-                # Detalhamento Visual Exigido para Dispositivos / Lotes / Quantidades
-                st.markdown("### 📦 Confronto Detalhado: Dispositivos / Produtos (Lotes, Validade e Quantidades)")
-                st.write("Abaixo está o comparativo exato extraído de cada documento para auditoria de itens:")
+                a_mais_na_newse = [s for s in mapa_serial_newse.keys() if s not in seriais_packing_todos]
+                if a_mais_na_newse:
+                    st.warning(f"⚠️ Seriais a mais na NEWSE, sem produto correspondente na Packing List: {', '.join(a_mais_na_newse)}")
+                    checks_1.append(False)
+                elif itens_packing:
+                    st.success("✅ Nenhum serial a mais na NEWSE — todos os produtos da NEWSE têm correspondência na Packing List.")
 
+                # Blocos de texto bruto, para conferência visual manual adicional
                 col_d1, col_d2 = st.columns(2)
                 with col_d1:
-                    st.info("📄 **Itens Encontrados no Pedido do Cliente (Origem):**")
-                    with st.expander("Ver blocos de itens do Pedido"):
+                    with st.expander("Ver texto bruto extraído da Packing List"):
                         st.text(t_pedido)
                 with col_d2:
-                    st.info("📄 **Itens Encontrados na NEWSE (Portal):**")
-                    with st.expander("Ver blocos de produtos da NEWSE"):
+                    with st.expander("Ver texto bruto extraído da NEWSE"):
                         st.text(t_newse)
 
-                # Validação cruzada de itens baseada na compatibilidade das ordens e conteúdo
-                if ordens_compativeis:
-                    st.success("✅ **Dispositivos e Lotes:** As ordens coincidem e os itens estruturais do pedido foram mapeados na NEWSE.")
-                else:
-                    aprovado_1 = False
-                    st.error("❌ **Dispositivos e Lotes:** ATENÇÃO! Como o Número da Ordem e o conteúdo dos documentos são totalmente divergentes (ex: Pedido do BCRI vs. NEWSE da BMS), os produtos não correspondem.")
                 st.markdown("---")
+                aprovado_1 = all(checks_1)
                 if aprovado_1:
                     st.success("🎉 **Resultado Final da Etapa 1:** APROVADO! Todos os dados essenciais e itens conferem perfeitamente.")
                 else:
-                    st.error("🚨 **Resultado Final da Etapa 1:** REPROVADO! Divergências críticas encontradas entre os documentos. Envie para correção.")
+                    st.error("🚨 **Resultado Final da Etapa 1:** REPROVADO! Divergências encontradas entre os documentos (veja acima quais campos/itens).")
             else:
                 st.warning("Por favor, faça o upload de ambos os arquivos.")
 
@@ -1381,23 +1581,74 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                 t_newse2 = extrair_texto_pdf_conferencia(newse_file_2)
                 t_agenda = extrair_texto_pdf_conferencia(agenda_file)
 
-                itens_etapa2 = [
-                    {"campo": "Protocolo / Estudo", "new": "Extraído da NEWSE", "age": "Extraído do Agendamento", "ok": True},
-                    {"campo": "CNPJ do Centro / Destinatário", "new": "Portal OK", "age": "E-mail OK", "ok": True},
-                    {"campo": "Contatos Autorizados de Entrega", "new": "Cadastrados", "age": "Informados", "ok": True},
-                    {"campo": "Janela de Entrega (Data/Horário)", "new": "Ignorado (Regra Etapa 2)", "age": "Ignorado (Regra Etapa 2)", "ok": True},
-                ]
+                checks_2 = []
+
+                m_prot_n2 = re.search(r"(CA\d+-\d+)", t_newse2.upper())
+                prot_n2 = m_prot_n2.group(1) if m_prot_n2 else "NÃO LOCALIZADO"
+                m_prot_a = re.search(r"(CA\d+-\d+)", t_agenda.upper())
+                prot_a = m_prot_a.group(1) if m_prot_a else "NÃO LOCALIZADO"
+                ok_prot2 = prot_n2 != "NÃO LOCALIZADO" and prot_n2 == prot_a
+
+                bloco_dest_n = t_newse2.split("Dados do Destinatário")[-1] if "Dados do Destinatário" in t_newse2 else t_newse2
+                m_cnpj_n = re.search(r"(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})", bloco_dest_n)
+                cnpj_n = so_digitos(m_cnpj_n.group(1)) if m_cnpj_n else "NÃO LOCALIZADO"
+                m_cnpj_a = re.search(r"CPF\s*/\s*CNPJ\s*:?\s*([\d\.\/\-]+)", t_agenda, re.IGNORECASE)
+                cnpj_a = so_digitos(m_cnpj_a.group(1)) if m_cnpj_a else "NÃO LOCALIZADO"
+                ok_cnpj2 = cnpj_n != "NÃO LOCALIZADO" and cnpj_n == cnpj_a
+
+                m_cep_n2 = re.search(r"CEP[^\d]*(\d{5}-?\d{3})", t_newse2, re.IGNORECASE)
+                cep_n2 = so_digitos(m_cep_n2.group(1)) if m_cep_n2 else "NÃO LOCALIZADO"
+                m_cep_a = re.search(r"CEP\s*:?\s*\n?\s*(\d{5}-?\d{3})", t_agenda, re.IGNORECASE)
+                cep_a = so_digitos(m_cep_a.group(1)) if m_cep_a else "NÃO LOCALIZADO"
+                ok_cep2 = cep_n2 != "NÃO LOCALIZADO" and cep_n2 == cep_a
+
+                m_contatos_n = re.search(
+                    r"Pessoa\(s\) Autorizada\(s\)\s*\nNome[^\n]*\n(.+?)Investigador",
+                    t_newse2, re.IGNORECASE | re.DOTALL,
+                )
+                contatos_n = extrair_lista_contatos(m_contatos_n.group(1)) if m_contatos_n else []
+                m_contatos_a = re.search(r"Contatos autorizados\s*:?(.+?)Data da entrega", t_agenda, re.IGNORECASE | re.DOTALL)
+                contatos_a_texto = m_contatos_a.group(1) if m_contatos_a else ""
+                encontrados_c2, faltando_c2 = comparar_listas_nomes(contatos_n, contatos_a_texto)
+                ok_contatos2 = bool(contatos_n) and not faltando_c2
 
                 st.markdown("### 📋 Tabela de Conferência Analítica - Etapa 2")
-                for item in itens_etapa2:
-                    c1, c2, c3, c4 = st.columns([2.5, 2, 2, 1.5])
-                    c1.write(f"**{item['campo']}**")
-                    c2.text(item["new"])
-                    c3.text(item["age"])
-                    c4.markdown("✅ Correto")
-                    st.markdown("---")
+                checks_2.append(linha_conferencia(
+                    "Protocolo / Estudo", prot_n2, prot_a, ok_prot2,
+                    "Protocolo idêntico nos dois documentos.",
+                    "Protocolo divergente ou não encontrado em um dos documentos.",
+                ))
+                checks_2.append(linha_conferencia(
+                    "CNPJ do Centro / Destinatário", cnpj_n, cnpj_a, ok_cnpj2,
+                    "CNPJ idêntico nos dois documentos.",
+                    "CNPJ divergente ou não encontrado em um dos documentos.",
+                ))
+                checks_2.append(linha_conferencia(
+                    "CEP do Centro", cep_n2, cep_a, ok_cep2,
+                    "CEP idêntico nos dois documentos.",
+                    "CEP divergente ou não encontrado em um dos documentos.",
+                ))
+                checks_2.append(linha_conferencia(
+                    "Contatos Autorizados de Entrega",
+                    ", ".join(contatos_n) or "NÃO LOCALIZADO",
+                    f"{len(encontrados_c2)}/{len(contatos_n)} confirmados" if contatos_n else "NÃO LOCALIZADO",
+                    ok_contatos2,
+                    "Todos os contatos autorizados da NEWSE aparecem no e-mail de Agendamento.",
+                    "Faltando no Agendamento: " + (", ".join(faltando_c2) or "-"),
+                ))
+                c1, c2, c3, c4 = st.columns([2.3, 2.2, 2.2, 1.6])
+                c1.write("**Janela de Entrega (Data/Horário)**")
+                c2.text("Ignorado por regra")
+                c3.text("Ignorado por regra")
+                c4.markdown("➖ Não avaliado")
+                st.caption("Por regra desta etapa, data e horário de entrega não são conferidos aqui (podem mudar por reagendamento sem indicar problema no envio).")
+                st.markdown("---")
 
-                st.success("🎉 **Resultado Final da Etapa 2:** APROVADO! O agendamento conversa perfeitamente com a NEWSE.")
+                aprovado_2 = all(checks_2)
+                if aprovado_2:
+                    st.success("🎉 **Resultado Final da Etapa 2:** APROVADO! O agendamento confere com a NEWSE.")
+                else:
+                    st.error("🚨 **Resultado Final da Etapa 2:** REPROVADO! Divergências encontradas entre os documentos (veja acima quais campos).")
             else:
                 st.warning("Por favor, faça o upload de ambos os arquivos.")
 
@@ -1418,36 +1669,111 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
 
         if st.button("Executar Auditoria Final", key="conf_btn3"):
             if f_newse_3 and f_agenda_3 and f_minuta_3:
+                t_newse3 = extrair_texto_pdf_conferencia(f_newse_3)
                 t_minuta = extrair_texto_pdf_conferencia(f_minuta_3)
-                cnpjs_drs_validos = ["00804488000100", "00804488000290"]
-                remetente_valido = any(cnpj in t_minuta for cnpj in cnpjs_drs_validos)
 
-                itens_etapa3 = [
-                    {"campo": "Remetente DRS (CNPJ Fixo Oficial)", "ref": "00804488000100 ou 00804488000290", "min": "Encontrado e Válido" if remetente_valido else "Divergente", "ok": remetente_valido},
-                    {"campo": "Tracking Number (Título do E-mail)", "ref": "Idêntico ao Agendamento", "min": "Validado na Minuta", "ok": True},
-                    {"campo": "CNPJ e Endereço do Destinatário", "ref": "Compatível com Agendamento", "min": "Validado na Minuta", "ok": True},
-                    {"campo": "Contatos Autorizados / P.I.", "ref": "Compatível", "min": "Validado na Minuta", "ok": True},
-                    {"campo": "Transportadora", "ref": "DRS COURIER LTDA", "min": "Validado na Minuta", "ok": True},
-                ]
+                checks_3 = []
+
+                cnpjs_drs_validos = ["00804488000100", "00804488000290"]
+                m_remetente = re.search(r"Remetente\s*-\s*([\d\.\/\-\s]+)", t_minuta)
+                remetente_digits = so_digitos(m_remetente.group(1)) if m_remetente else ""
+                ok_remetente = remetente_digits in cnpjs_drs_validos
+
+                m_prot_n3 = re.search(r"(CA\d+-\d+)", t_newse3.upper())
+                prot_n3 = m_prot_n3.group(1) if m_prot_n3 else "NÃO LOCALIZADO"
+                m_prot_m = re.search(r"(CA\d+-\d+)", t_minuta.upper())
+                prot_m = m_prot_m.group(1) if m_prot_m else "NÃO LOCALIZADO"
+                ok_prot3 = prot_n3 != "NÃO LOCALIZADO" and prot_n3 == prot_m
+
+                m_track_n = re.search(r"Tracking Number\s*:?\s*\n?\s*([\d\-]+)", t_newse3, re.IGNORECASE)
+                track_n = m_track_n.group(1) if m_track_n else "NÃO LOCALIZADO"
+                m_track_m = re.search(r"TRACKING NUMBER\s+([\d\-]+)", t_minuta, re.IGNORECASE)
+                track_m = m_track_m.group(1) if m_track_m else "NÃO LOCALIZADO"
+                ok_track = track_n != "NÃO LOCALIZADO" and track_n == track_m
+
+                bloco_dest_n3 = t_newse3.split("Dados do Destinatário")[-1] if "Dados do Destinatário" in t_newse3 else t_newse3
+                m_cnpj_n3 = re.search(r"(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})", bloco_dest_n3)
+                cnpj_n3 = so_digitos(m_cnpj_n3.group(1)) if m_cnpj_n3 else "NÃO LOCALIZADO"
+                m_dest_minuta = re.search(r"Destinat[aá]rio\s*-\s*([\d\s]+)", t_minuta)
+                dest_cnpj_minuta = so_digitos(m_dest_minuta.group(1)) if m_dest_minuta else "NÃO LOCALIZADO"
+                ok_dest_cnpj = dest_cnpj_minuta != "NÃO LOCALIZADO" and dest_cnpj_minuta == cnpj_n3
+
+                m_inv_n3 = re.search(
+                    r"Investigador\(es\) Principal\(is\) / M[eé]dico\(s\)\s*\n?Nome\s*\n?([^\n]+)",
+                    t_newse3, re.IGNORECASE,
+                )
+                inv_n3 = m_inv_n3.group(1).strip() if m_inv_n3 else "NÃO LOCALIZADO"
+                m_pi_minuta = re.search(r"P\.I\.\s*([^\n]+)", t_minuta)
+                pi_minuta = m_pi_minuta.group(1).strip() if m_pi_minuta else "NÃO LOCALIZADO"
+                palavras_inv3 = [w for w in remover_acentos(inv_n3.upper()).split() if len(w) >= 3]
+                ok_pi3 = bool(palavras_inv3) and all(
+                    w in remover_acentos(pi_minuta.upper()) for w in [palavras_inv3[0], palavras_inv3[-1]]
+                )
+
+                m_contatos_n3 = re.search(
+                    r"Pessoa\(s\) Autorizada\(s\)\s*\nNome[^\n]*\n(.+?)Investigador",
+                    t_newse3, re.IGNORECASE | re.DOTALL,
+                )
+                contatos_n3 = extrair_lista_contatos(m_contatos_n3.group(1)) if m_contatos_n3 else []
+                # "CONTATO" e "COLETA" às vezes saem com um espaço extra no meio
+                # ("CONT ATO", "COLET A") por um artefato de fonte da Minuta.
+                m_contatos_m = re.search(
+                    r"CONT\s*ATO AUTORIZADO ENTREGA\s*(.+?)CONT\s*ATO AUTORIZADO COLET\s*A",
+                    t_minuta, re.IGNORECASE | re.DOTALL,
+                )
+                contatos_m_texto = m_contatos_m.group(1) if m_contatos_m else ""
+                encontrados_c3, faltando_c3 = comparar_listas_nomes(contatos_n3, contatos_m_texto)
+                ok_contatos3 = bool(contatos_n3) and not faltando_c3
+
+                m_transp = re.search(r"DRS\s*(COURIER|ADMINISTRA[CÇ][AÃ]O DE ESTOQUES)", t_minuta, re.IGNORECASE)
+                ok_transp = bool(m_transp)
 
                 st.markdown("### 📋 Tabela de Conferência Analítica - Etapa 3")
-                aprovado_3 = True
-                for item in itens_etapa3:
-                    status_txt = "✅ Correto" if item["ok"] else "❌ Divergente / Faltando"
-                    if not item["ok"]:
-                        aprovado_3 = False
+                checks_3.append(linha_conferencia(
+                    "Protocolo / Estudo", prot_n3, prot_m, ok_prot3,
+                    "Protocolo idêntico nos dois documentos.",
+                    "Protocolo divergente ou não encontrado em um dos documentos.",
+                ))
+                checks_3.append(linha_conferencia(
+                    "Remetente DRS (CNPJ Fixo Oficial)", "00804488000100 ou 00804488000290", remetente_digits, ok_remetente,
+                    "CNPJ do remetente é um dos CNPJs oficiais da DRS.",
+                    "CNPJ do remetente na Minuta não é nenhum dos CNPJs oficiais da DRS.",
+                ))
+                checks_3.append(linha_conferencia(
+                    "Tracking Number", track_n, track_m, ok_track,
+                    "Tracking Number idêntico nos dois documentos.",
+                    "Tracking Number divergente ou não encontrado em um dos documentos.",
+                ))
+                checks_3.append(linha_conferencia(
+                    "CNPJ do Destinatário", cnpj_n3, dest_cnpj_minuta, ok_dest_cnpj,
+                    "CNPJ do destinatário idêntico nos dois documentos.",
+                    "CNPJ do destinatário divergente ou não encontrado em um dos documentos.",
+                ))
+                checks_3.append(linha_conferencia(
+                    "P.I. / Investigador", inv_n3, pi_minuta, ok_pi3,
+                    "Nome do investigador da NEWSE localizado no campo P.I. da Minuta.",
+                    "Nome do investigador da NEWSE não foi localizado no campo P.I. da Minuta.",
+                ))
+                checks_3.append(linha_conferencia(
+                    "Contatos Autorizados",
+                    ", ".join(contatos_n3) or "NÃO LOCALIZADO",
+                    f"{len(encontrados_c3)}/{len(contatos_n3)} confirmados" if contatos_n3 else "NÃO LOCALIZADO",
+                    ok_contatos3,
+                    "Todos os contatos autorizados da NEWSE aparecem na Minuta.",
+                    "Faltando na Minuta: " + (", ".join(faltando_c3) or "-"),
+                ))
+                checks_3.append(linha_conferencia(
+                    "Transportadora", "DRS COURIER LTDA (regra fixa)",
+                    m_transp.group(0) if m_transp else "NÃO ENCONTRADA", ok_transp,
+                    "Transportadora oficial DRS identificada na Minuta.",
+                    "Transportadora oficial DRS não foi encontrada na Minuta.",
+                ))
 
-                    c1, c2, c3, c4 = st.columns([2.5, 2, 2, 1.5])
-                    c1.write(f"**{item['campo']}**")
-                    c2.text(item["ref"])
-                    c3.text(item["min"])
-                    c4.markdown(status_txt)
-                    st.markdown("---")
-
+                aprovado_3 = all(checks_3)
                 if aprovado_3:
                     st.success("🎉 **Resultado Final da Etapa 3:** TUDO CERTO com a minuta de envio! Processo liberado para o time de Expedição.")
                 else:
-                    st.error("🚨 **Resultado Final da Etapa 3:** REPROVADO! O CNPJ do remetente DRS na minuta não confere com os padrões oficiais.")
+                    st.error("🚨 **Resultado Final da Etapa 3:** REPROVADO! Divergências encontradas entre os documentos (veja acima quais campos).")
             else:
                 st.warning("Por favor, faça o upload de todos os três documentos exigidos.")
 
