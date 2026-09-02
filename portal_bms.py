@@ -1268,6 +1268,25 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
         </div>
     """, unsafe_allow_html=True)
 
+    if "conferencia_uploader_key" not in st.session_state:
+        st.session_state.conferencia_uploader_key = 0
+    if "conf_etapa3_resultado" not in st.session_state:
+        st.session_state.conf_etapa3_resultado = None
+    if "conf_etapa3_confirmado" not in st.session_state:
+        st.session_state.conf_etapa3_confirmado = False
+
+    col_excluir, col_excluir_vazio = st.columns([1, 4])
+    with col_excluir:
+        if st.button("🗑️ Excluir PDFs", key="conf_excluir_topo", use_container_width=True):
+            # Limpa os uploads das 3 etapas de uma vez (todas usam essa mesma
+            # "key" como sufixo — trocá-la faz o Streamlit tratar cada
+            # file_uploader como um campo novo/vazio) — para quando a pessoa
+            # errou algum arquivo ou só quer recomeçar do zero.
+            st.session_state.conferencia_uploader_key += 1
+            st.session_state.conf_etapa3_resultado = None
+            st.session_state.conf_etapa3_confirmado = False
+            st.rerun()
+
     def extrair_texto_pdf_conferencia(arquivo):
         """Mesma extração usada no resto do portal (pypdf), mas mantendo uma
         quebra de linha entre páginas — os regex desta página dependem de
@@ -1411,9 +1430,9 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
 
         col1, col2 = st.columns(2)
         with col1:
-            pedido_file = st.file_uploader("Arraste a Packing List (PDF)", type=["pdf"], key="conf_p_etapa1")
+            pedido_file = st.file_uploader("Arraste a Packing List (PDF)", type=["pdf"], key=f"conf_p_etapa1_{st.session_state.conferencia_uploader_key}")
         with col2:
-            newse_file_1 = st.file_uploader("Arraste a NEWSE (PDF)", type=["pdf"], key="conf_n_etapa1")
+            newse_file_1 = st.file_uploader("Arraste a NEWSE (PDF)", type=["pdf"], key=f"conf_n_etapa1_{st.session_state.conferencia_uploader_key}")
 
         if st.button("Validar Etapa 1", key="conf_btn1"):
             if pedido_file and newse_file_1:
@@ -1572,9 +1591,9 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
 
         col1, col2 = st.columns(2)
         with col1:
-            newse_file_2 = st.file_uploader("Arraste a NEWSE (PDF)", type=["pdf"], key="conf_n_etapa2")
+            newse_file_2 = st.file_uploader("Arraste a NEWSE (PDF)", type=["pdf"], key=f"conf_n_etapa2_{st.session_state.conferencia_uploader_key}")
         with col2:
-            agenda_file = st.file_uploader("Arraste o E-mail de Agendamento (PDF)", type=["pdf"], key="conf_a_etapa2")
+            agenda_file = st.file_uploader("Arraste o E-mail de Agendamento (PDF)", type=["pdf"], key=f"conf_a_etapa2_{st.session_state.conferencia_uploader_key}")
 
         if st.button("Validar Etapa 2", key="conf_btn2"):
             if newse_file_2 and agenda_file:
@@ -1661,11 +1680,11 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            f_newse_3 = st.file_uploader("NEWSE", type=["pdf"], key="conf_n_etapa3")
+            f_newse_3 = st.file_uploader("NEWSE", type=["pdf"], key=f"conf_n_etapa3_{st.session_state.conferencia_uploader_key}")
         with col2:
-            f_agenda_3 = st.file_uploader("Agendamento", type=["pdf"], key="conf_a_etapa3")
+            f_agenda_3 = st.file_uploader("Agendamento", type=["pdf"], key=f"conf_a_etapa3_{st.session_state.conferencia_uploader_key}")
         with col3:
-            f_minuta_3 = st.file_uploader("Minuta de Envio (SC)", type=["pdf"], key="conf_m_etapa3")
+            f_minuta_3 = st.file_uploader("Minuta de Envio (SC)", type=["pdf"], key=f"conf_m_etapa3_{st.session_state.conferencia_uploader_key}")
 
         if st.button("Executar Auditoria Final", key="conf_btn3"):
             if f_newse_3 and f_agenda_3 and f_minuta_3:
@@ -1728,54 +1747,79 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                 m_transp = re.search(r"DRS\s*(COURIER|ADMINISTRA[CÇ][AÃ]O DE ESTOQUES)", t_minuta, re.IGNORECASE)
                 ok_transp = bool(m_transp)
 
-                st.markdown("### 📋 Tabela de Conferência Analítica - Etapa 3")
-                checks_3.append(linha_conferencia(
-                    "Protocolo / Estudo", prot_n3, prot_m, ok_prot3,
-                    "Protocolo idêntico nos dois documentos.",
-                    "Protocolo divergente ou não encontrado em um dos documentos.",
-                ))
-                checks_3.append(linha_conferencia(
-                    "Remetente DRS (CNPJ Fixo Oficial)", "00804488000100 ou 00804488000290", remetente_digits, ok_remetente,
-                    "CNPJ do remetente é um dos CNPJs oficiais da DRS.",
-                    "CNPJ do remetente na Minuta não é nenhum dos CNPJs oficiais da DRS.",
-                ))
-                checks_3.append(linha_conferencia(
-                    "Tracking Number", track_n, track_m, ok_track,
-                    "Tracking Number idêntico nos dois documentos.",
-                    "Tracking Number divergente ou não encontrado em um dos documentos.",
-                ))
-                checks_3.append(linha_conferencia(
-                    "CNPJ do Destinatário", cnpj_n3, dest_cnpj_minuta, ok_dest_cnpj,
-                    "CNPJ do destinatário idêntico nos dois documentos.",
-                    "CNPJ do destinatário divergente ou não encontrado em um dos documentos.",
-                ))
-                checks_3.append(linha_conferencia(
-                    "P.I. / Investigador", inv_n3, pi_minuta, ok_pi3,
-                    "Nome do investigador da NEWSE localizado no campo P.I. da Minuta.",
-                    "Nome do investigador da NEWSE não foi localizado no campo P.I. da Minuta.",
-                ))
-                checks_3.append(linha_conferencia(
-                    "Contatos Autorizados",
-                    ", ".join(contatos_n3) or "NÃO LOCALIZADO",
-                    f"{len(encontrados_c3)}/{len(contatos_n3)} confirmados" if contatos_n3 else "NÃO LOCALIZADO",
-                    ok_contatos3,
-                    "Todos os contatos autorizados da NEWSE aparecem na Minuta.",
-                    "Faltando na Minuta: " + (", ".join(faltando_c3) or "-"),
-                ))
-                checks_3.append(linha_conferencia(
-                    "Transportadora", "DRS COURIER LTDA (regra fixa)",
-                    m_transp.group(0) if m_transp else "NÃO ENCONTRADA", ok_transp,
-                    "Transportadora oficial DRS identificada na Minuta.",
-                    "Transportadora oficial DRS não foi encontrada na Minuta.",
-                ))
-
-                aprovado_3 = all(checks_3)
-                if aprovado_3:
-                    st.success("🎉 **Resultado Final da Etapa 3:** TUDO CERTO com a minuta de envio! Processo liberado para o time de Expedição.")
-                else:
-                    st.error("🚨 **Resultado Final da Etapa 3:** REPROVADO! Divergências encontradas entre os documentos (veja acima quais campos).")
+                # Monta a lista de linhas (sem renderizar ainda) e guarda o
+                # resultado em session_state — em vez de desenhar a tabela
+                # direto aqui dentro do "if st.button(...)". Isso é necessário
+                # porque os botões "OK" e "Liberar Processo" (mais abaixo)
+                # disparam um novo rerun do Streamlit, e nesse novo rerun o
+                # botão "Executar Auditoria Final" não estaria mais
+                # "pressionado" — sem guardar o resultado, a tabela e o
+                # resultado sumiriam da tela assim que a pessoa clicasse em
+                # "OK".
+                linhas_3 = [
+                    ("Protocolo / Estudo", prot_n3, prot_m, ok_prot3,
+                     "Protocolo idêntico nos dois documentos.",
+                     "Protocolo divergente ou não encontrado em um dos documentos."),
+                    ("Remetente DRS (CNPJ Fixo Oficial)", "00804488000100 ou 00804488000290", remetente_digits, ok_remetente,
+                     "CNPJ do remetente é um dos CNPJs oficiais da DRS.",
+                     "CNPJ do remetente na Minuta não é nenhum dos CNPJs oficiais da DRS."),
+                    ("Tracking Number", track_n, track_m, ok_track,
+                     "Tracking Number idêntico nos dois documentos.",
+                     "Tracking Number divergente ou não encontrado em um dos documentos."),
+                    ("CNPJ do Destinatário", cnpj_n3, dest_cnpj_minuta, ok_dest_cnpj,
+                     "CNPJ do destinatário idêntico nos dois documentos.",
+                     "CNPJ do destinatário divergente ou não encontrado em um dos documentos."),
+                    ("P.I. / Investigador", inv_n3, pi_minuta, ok_pi3,
+                     "Nome do investigador da NEWSE localizado no campo P.I. da Minuta.",
+                     "Nome do investigador da NEWSE não foi localizado no campo P.I. da Minuta."),
+                    ("Contatos Autorizados",
+                     ", ".join(contatos_n3) or "NÃO LOCALIZADO",
+                     f"{len(encontrados_c3)}/{len(contatos_n3)} confirmados" if contatos_n3 else "NÃO LOCALIZADO",
+                     ok_contatos3,
+                     "Todos os contatos autorizados da NEWSE aparecem na Minuta.",
+                     "Faltando na Minuta: " + (", ".join(faltando_c3) or "-")),
+                    ("Transportadora", "DRS COURIER LTDA (regra fixa)",
+                     m_transp.group(0) if m_transp else "NÃO ENCONTRADA", ok_transp,
+                     "Transportadora oficial DRS identificada na Minuta.",
+                     "Transportadora oficial DRS não foi encontrada na Minuta."),
+                ]
+                aprovado_3 = all(linha[3] for linha in linhas_3)
+                st.session_state.conf_etapa3_resultado = {"linhas": linhas_3, "aprovado": aprovado_3}
+                # Nova auditoria executada: qualquer confirmação de OK anterior
+                # deixa de valer, tem que revisar e confirmar de novo.
+                st.session_state.conf_etapa3_confirmado = False
             else:
                 st.warning("Por favor, faça o upload de todos os três documentos exigidos.")
+
+        # Renderiza o resultado guardado (se houver) — continua na tela mesmo
+        # depois de reruns causados pelos botões "OK" e "Liberar Processo".
+        resultado_3 = st.session_state.conf_etapa3_resultado
+        if resultado_3:
+            st.markdown("### 📋 Tabela de Conferência Analítica - Etapa 3")
+            for linha in resultado_3["linhas"]:
+                linha_conferencia(*linha)
+
+            if resultado_3["aprovado"]:
+                st.success("🎉 **Resultado Final da Etapa 3:** TUDO CERTO com a minuta de envio! Processo liberado para o time de Expedição.")
+            else:
+                st.error("🚨 **Resultado Final da Etapa 3:** REPROVADO! Divergências encontradas entre os documentos (veja acima quais campos).")
+
+            st.markdown("---")
+
+            # Confirmação obrigatória antes de liberar o processo — só depois
+            # de clicar em "OK" é que aparece o lembrete e o botão para
+            # limpar os PDFs das 3 etapas.
+            if not st.session_state.conf_etapa3_confirmado:
+                if st.button("✅ OK — Revisei o Resultado da Etapa 3", key="conf_etapa3_ok_btn", use_container_width=True):
+                    st.session_state.conf_etapa3_confirmado = True
+                    st.rerun()
+            else:
+                st.info("⚠️ **Não esqueça de validar a planilha de expedição.**")
+                if st.button("🔓 Liberar Processo (limpar PDFs das Etapas 1, 2 e 3)", key="conf_liberar_btn", use_container_width=True):
+                    st.session_state.conferencia_uploader_key += 1
+                    st.session_state.conf_etapa3_resultado = None
+                    st.session_state.conf_etapa3_confirmado = False
+                    st.rerun()
 
 # ==========================================
 # PÁGINA: BMS BRASIL - SOLICITAÇÕES (retirada de TAG sem Packing List)
