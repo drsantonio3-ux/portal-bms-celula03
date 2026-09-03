@@ -404,6 +404,35 @@ st.markdown("""
     label {
         color: var(--drs-verde) !important;
     }
+    /* A regra acima pega TODO texto dentro de qualquer stMarkdownContainer —
+       inclusive o texto dos banners verdes de cada etapa (que também são
+       renderizados como markdown) e o rótulo dos botões do menu lateral
+       (o Streamlit também usa um parágrafo de markdown como rótulo do
+       botão). Nesses dois casos o texto forçado para verde-escuro ficava
+       da mesma cor do fundo escuro (banner / botão ativo) e sumia — por
+       isso as regras abaixo, mais específicas, vêm depois e reescrevem a
+       cor só nesses dois casos específicos. */
+    [data-testid="stMarkdownContainer"] .drs-banner h2,
+    [data-testid="stMarkdownContainer"] .drs-banner h2 * {
+        color: #e59235 !important;
+        font-weight: 800 !important;
+    }
+    [data-testid="stMarkdownContainer"] .drs-banner p,
+    [data-testid="stMarkdownContainer"] .drs-banner p *,
+    [data-testid="stMarkdownContainer"] .drs-banner span,
+    [data-testid="stMarkdownContainer"] .drs-banner li {
+        color: #f7c88f !important;
+        font-weight: 700 !important;
+    }
+    [data-testid="stSidebar"] .stButton>button[kind="primary"] p,
+    [data-testid="stSidebar"] .stButton>button[kind="primary"] span,
+    [data-testid="stSidebar"] .stButton>button[kind="primary"] div,
+    [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] p,
+    [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] span,
+    [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] div {
+        color: #ffffff !important;
+        font-weight: 700 !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 # --- SISTEMA DE AUTENTICAÇÃO ---
@@ -614,7 +643,7 @@ def card_metrica(titulo, valor):
 if st.session_state.pagina_atual == "automacao":
 
     st.markdown("""
-        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" class="drs-banner">
             <h2 style="color: #e59235 !important; font-weight: 800 !important; margin: 0 0 6px 0; font-size: 18px;">📦 Automação de Packing List (SLA e Estoque)</h2>
             <p style="color: #f0b978 !important; font-weight: 700 !important; margin: 0; font-size: 13px; line-height: 1.4;">
                 Faça o upload do <b>Packing List (PDF)</b> para extração imediata de dados. O sistema realiza a sugestão automática de <b>ativos logísticos</b>,<br> cálculo exato do <b>SLA de entrega</b> (considerando dias úteis) e a <b>baixa de estoque ao vivo na planilha</b>.
@@ -969,7 +998,7 @@ if st.session_state.pagina_atual == "automacao":
 elif st.session_state.pagina_atual == "cruzamento":
 
     st.markdown("""
-        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" class="drs-banner">
             <h2 style="color: #e59235 !important; font-weight: 800 !important; margin: 0 0 6px 0; font-size: 18px;">⚖️ Assistente de Conferência - Validação de Remessa</h2>
             <p style="color: #f0b978 !important; font-weight: 700 !important; margin: 0; font-size: 13px; line-height: 1.4;">
                 Aja como a 'Assistente de Conferência'. Analise o texto do Shipment e da Solicitação fornecidos.<br>
@@ -1232,7 +1261,7 @@ elif st.session_state.pagina_atual == "cruzamento":
 # na tela — nunca só "Verificar PDF".
 elif st.session_state.pagina_atual == "conferencia_agendamento":
     st.markdown("""
-        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #6d28d9; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #6d28d9; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" class="drs-banner">
             <h2 style="color: #e59235 !important; font-weight: 800 !important; margin: 0 0 6px 0; font-size: 18px;">🧾 Conferência de Agendamento — Packing List, NEWSE, Agendamento e Minuta</h2>
             <p style="color: #f0b978 !important; font-weight: 700 !important; margin: 0; font-size: 13px; line-height: 1.4;">
                 Auditoria estruturada campo a campo, em 3 etapas: <b>Packing List x NEWSE</b>, <b>NEWSE x Agendamento</b>
@@ -1741,7 +1770,7 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
 # ==========================================
 elif st.session_state.pagina_atual == "bms_brasil":
     st.markdown("""
-        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" class="drs-banner">
             <h2 style="color: #e59235 !important; font-weight: 800 !important; margin: 0 0 6px 0; font-size: 18px;">🇧🇷 BMS Brasil — Solicitações</h2>
             <p style="color: #f0b978 !important; font-weight: 700 !important; margin: 0; font-size: 13px; line-height: 1.4;">
                 Para solicitações da <b>BMS Brasil</b>, a NEWSE não vem acompanhada de Packing List com TAG/TEMP já definido.
@@ -1978,7 +2007,7 @@ elif st.session_state.pagina_atual == "bms_brasil":
 # preencher quando a ficha for encaminhada por e-mail.
 elif st.session_state.pagina_atual == "ficha_comercial":
     st.markdown("""
-        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" class="drs-banner">
             <h2 style="color: #e59235 !important; font-weight: 800 !important; margin: 0 0 6px 0; font-size: 18px;">🚚 Ficha Comercial - PO para Transferências</h2>
             <p style="color: #f0b978 !important; font-weight: 700 !important; margin: 0; font-size: 13px; line-height: 1.4;">
                 Faça o upload do <b>e-mail da proposta comercial de transferência (PDF)</b> — coleta na BMS, entrega em vários
@@ -2192,7 +2221,7 @@ btnFicha.addEventListener('click', async function () {
 # ==========================================
 elif st.session_state.pagina_atual == "email":
     st.markdown("""
-        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" class="drs-banner">
             <h2 style="color: #e59235 !important; font-weight: 800 !important; margin: 0 0 6px 0; font-size: 18px;">📧 Gerador de E-mail (GR)</h2>
             <p style="color: #f0b978 !important; font-weight: 700 !important; margin: 0; font-size: 13px; line-height: 1.4;">
                 Preencha os dados do recebimento para montar o e-mail de Goods Receipt (GR) e copie o assunto, os destinatários e o corpo já formatados.
