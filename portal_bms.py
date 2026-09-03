@@ -9,6 +9,7 @@ import json
 import time
 import os
 import unicodedata
+import html
 def extrair_texto_pdf(leitor, separador=""):
     """Extrai o texto de todas as páginas de um PDF.
     Ignora páginas sem texto extraível (ex: PDFs escaneados/imagem),
@@ -614,8 +615,8 @@ if st.session_state.pagina_atual == "automacao":
 
     st.markdown("""
         <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">📦 Automação de Packing List (SLA e Estoque)</h2>
-            <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
+            <h2 style="color: #e59235 !important; margin: 0 0 6px 0; font-size: 18px;">📦 Automação de Packing List (SLA e Estoque)</h2>
+            <p style="color: #f0b978 !important; margin: 0; font-size: 13px; line-height: 1.4;">
                 Faça o upload do <b>Packing List (PDF)</b> para extração imediata de dados. O sistema realiza a sugestão automática de <b>ativos logísticos</b>,<br> cálculo exato do <b>SLA de entrega</b> (considerando dias úteis) e a <b>baixa de estoque ao vivo na planilha</b>.
             </p>
         </div>
@@ -969,8 +970,8 @@ elif st.session_state.pagina_atual == "cruzamento":
 
     st.markdown("""
         <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">⚖️ Assistente de Conferência - Validação de Remessa</h2>
-            <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
+            <h2 style="color: #e59235 !important; margin: 0 0 6px 0; font-size: 18px;">⚖️ Assistente de Conferência - Validação de Remessa</h2>
+            <p style="color: #f0b978 !important; margin: 0; font-size: 13px; line-height: 1.4;">
                 Aja como a 'Assistente de Conferência'. Analise o texto do Shipment e da Solicitação fornecidos.<br>
                 Compare estritamente os campos e bloqueie remessas com divergências.
             </p>
@@ -1232,8 +1233,8 @@ elif st.session_state.pagina_atual == "cruzamento":
 elif st.session_state.pagina_atual == "conferencia_agendamento":
     st.markdown("""
         <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #6d28d9; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">🧾 Conferência de Agendamento — Packing List, NEWSE, Agendamento e Minuta</h2>
-            <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
+            <h2 style="color: #e59235 !important; margin: 0 0 6px 0; font-size: 18px;">🧾 Conferência de Agendamento — Packing List, NEWSE, Agendamento e Minuta</h2>
+            <p style="color: #f0b978 !important; margin: 0; font-size: 13px; line-height: 1.4;">
                 Auditoria estruturada campo a campo, em 3 etapas: <b>Packing List x NEWSE</b>, <b>NEWSE x Agendamento</b>
                 e <b>Auditoria Final com a Minuta de Envio (SC)</b>. Todo campo comparado mostra o valor extraído dos dois
                 documentos lado a lado — nada fica marcado como correto sem ter sido checado de fato.
@@ -1741,8 +1742,8 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
 elif st.session_state.pagina_atual == "bms_brasil":
     st.markdown("""
         <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">🇧🇷 BMS Brasil — Solicitações</h2>
-            <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
+            <h2 style="color: #e59235 !important; margin: 0 0 6px 0; font-size: 18px;">🇧🇷 BMS Brasil — Solicitações</h2>
+            <p style="color: #f0b978 !important; margin: 0; font-size: 13px; line-height: 1.4;">
                 Para solicitações da <b>BMS Brasil</b>, a NEWSE não vem acompanhada de Packing List com TAG/TEMP já definido.
                 Anexe a <b>NEWSE (PDF)</b> aqui para retirar automaticamente o <b>Tag Alert</b> (Ambiente ou Refrigerado, conforme a
                 faixa de temperatura da solicitação) e registrar a retirada para rastreabilidade — sem TempTale, e sem precisar
@@ -1978,8 +1979,8 @@ elif st.session_state.pagina_atual == "bms_brasil":
 elif st.session_state.pagina_atual == "ficha_comercial":
     st.markdown("""
         <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">🚚 Ficha Comercial - PO para Transferências</h2>
-            <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
+            <h2 style="color: #e59235 !important; margin: 0 0 6px 0; font-size: 18px;">🚚 Ficha Comercial - PO para Transferências</h2>
+            <p style="color: #f0b978 !important; margin: 0; font-size: 13px; line-height: 1.4;">
                 Faça o upload do <b>e-mail da proposta comercial de transferência (PDF)</b> — coleta na BMS, entrega em vários
                 centros. O sistema identifica o protocolo e cada centro de destino, <b>confirma a cidade de cada um pelo CEP</b>
                 (não pelo texto do e-mail, que pode vir errado) e pré-preenche a Ficha Comercial.
@@ -2036,18 +2037,18 @@ elif st.session_state.pagina_atual == "ficha_comercial":
                             # pegar, então isso conta como divergência a
                             # revisar, não como "não confirmado" silencioso.
                             ceps_incompletos.append(centro)
-                            destino_str = (
-                                f"{centro['cidade_declarada']}/{centro['uf_declarada']} "
-                                f"(⚠️ CEP incompleto no e-mail: \"{centro['cep_formatado']}\" — confirme manualmente)"
-                                if centro["cidade_declarada"]
-                                else f"Centro {centro['numero']} — CEP incompleto no e-mail (\"{centro['cep_formatado']}\"), confirme manualmente"
-                            )
-                        else:
-                            destino_str = (
-                                f"{centro['cidade_declarada']}/{centro['uf_declarada']} (CEP não confirmado)"
-                                if centro["cidade_declarada"]
-                                else f"Centro {centro['numero']} — CEP não confirmado, preencher manualmente"
-                            )
+                        # A ficha comercial (o que vai ser copiado/enviado por
+                        # e-mail) mostra só o nome da cidade — nada de CEP ou
+                        # texto de alerta ali. Os detalhes de divergência/CEP
+                        # incompleto já aparecem na lista de conferência acima
+                        # e servem como evidência para a monitora; aqui é só
+                        # a melhor cidade disponível (a do e-mail, quando o
+                        # CEP não pôde confirmar nada).
+                        destino_str = (
+                            f"{centro['cidade_declarada']}/{centro['uf_declarada']}"
+                            if centro["cidade_declarada"]
+                            else "A CONFIRMAR"
+                        )
                     destinos_finais.append(destino_str)
 
                     # Só dá para comparar quando havia uma cidade ESCRITA no
@@ -2112,7 +2113,7 @@ elif st.session_state.pagina_atual == "ficha_comercial":
                 ("PESO", ""),
                 ("SLA", "24,48,72"),
                 ("MATERIAL", "TRAZER A INFORMAÇÃO DO CORPO DO E-MAIL"),
-                ("EMBALAGEM", "PELÃO"),
+                ("EMBALAGEM", "PAPELÃO"),
                 ("LOGGER", "NÃO"),
                 ("GELO", "NÃO"),
                 ("CONSULTOR (A)", ""),
@@ -2123,19 +2124,61 @@ elif st.session_state.pagina_atual == "ficha_comercial":
             df_ficha = pd.DataFrame(campos_ficha, columns=["Campo", "Valor"])
             st.dataframe(df_ficha, use_container_width=True, hide_index=True)
 
-            texto_ficha = "\n".join([f"{campo}: {valor}" for campo, valor in campos_ficha])
-            components.html(
-                f"""<button onclick="navigator.clipboard.writeText(`{texto_ficha}`); this.innerText='📋 Ficha Copiada!';" style="background:#e59235; color:white; font-size:13px; font-weight:bold; padding:8px; border:none; border-radius:4px; width:100%; cursor:pointer;">📋 Copiar Ficha Comercial</button>""",
-                height=40,
+            # Botão "Copiar Ficha Comercial": copia uma TABELA de verdade (não
+            # texto solto) — ao colar num e-mail (Outlook/Gmail), o cliente de
+            # e-mail recebe a tabela em HTML e mantém linhas/colunas, exatamente
+            # como colar uma tabela do Excel. Também escrevemos uma versão em
+            # texto simples (separada por tab) como alternativa, para quando o
+            # destino da colagem não aceitar HTML.
+            #
+            # Importante: os valores da ficha são colocados no HTML/JS via
+            # json.dumps() (nunca por f-string direta dentro de aspas de
+            # atributo), porque um valor com aspas dentro (ex: um alerta de
+            # CEP) quebrava o atributo onclick="..." e o botão de copiar
+            # simplesmente parava de funcionar.
+            linhas_html_ficha = "".join(
+                '<tr>'
+                f'<td style="border:1px solid #94a3b8;padding:5px 10px;background:#f1f5f9;font-weight:bold;white-space:nowrap;">{html.escape(str(campo))}</td>'
+                f'<td style="border:1px solid #94a3b8;padding:5px 10px;">{html.escape(str(valor))}</td>'
+                '</tr>'
+                for campo, valor in campos_ficha
             )
+            tabela_html_ficha = (
+                '<table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:13px;">'
+                f"<tbody>{linhas_html_ficha}</tbody></table>"
+            )
+            texto_ficha = "\n".join([f"{campo}: {valor}" for campo, valor in campos_ficha])
+
+            html_botao_copiar_ficha = """
+<button id="btn_copiar_ficha_comercial" style="background:#e59235; color:white; font-size:13px; font-weight:bold; padding:8px; border:none; border-radius:4px; width:100%; cursor:pointer;">📋 Copiar Ficha Comercial (tabela)</button>
+<script>
+const fichaHtml = __FICHA_HTML__;
+const fichaTexto = __FICHA_TEXTO__;
+const btnFicha = document.getElementById('btn_copiar_ficha_comercial');
+btnFicha.addEventListener('click', async function () {
+    try {
+        const item = new ClipboardItem({
+            'text/html': new Blob([fichaHtml], {type: 'text/html'}),
+            'text/plain': new Blob([fichaTexto], {type: 'text/plain'})
+        });
+        await navigator.clipboard.write([item]);
+    } catch (e) {
+        await navigator.clipboard.writeText(fichaTexto);
+    }
+    btnFicha.innerText = '📋 Ficha copiada! Já pode colar no e-mail.';
+    setTimeout(function () { btnFicha.innerText = '📋 Copiar Ficha Comercial (tabela)'; }, 2500);
+});
+</script>
+""".replace("__FICHA_HTML__", json.dumps(tabela_html_ficha)).replace("__FICHA_TEXTO__", json.dumps(texto_ficha))
+            components.html(html_botao_copiar_ficha, height=50)
 # ==========================================
 # PÁGINA: GERADOR DE E-MAIL (GR)
 # ==========================================
 elif st.session_state.pagina_atual == "email":
     st.markdown("""
         <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">📧 Gerador de E-mail (GR)</h2>
-            <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
+            <h2 style="color: #e59235 !important; margin: 0 0 6px 0; font-size: 18px;">📧 Gerador de E-mail (GR)</h2>
+            <p style="color: #f0b978 !important; margin: 0; font-size: 13px; line-height: 1.4;">
                 Preencha os dados do recebimento para montar o e-mail de Goods Receipt (GR) e copie o assunto, os destinatários e o corpo já formatados.
             </p>
         </div>
