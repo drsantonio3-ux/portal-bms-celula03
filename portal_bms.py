@@ -9,28 +9,21 @@ import json
 import time
 import os
 import unicodedata
-
-
 def extrair_texto_pdf(leitor, separador=""):
     """Extrai o texto de todas as páginas de um PDF.
     Ignora páginas sem texto extraível (ex: PDFs escaneados/imagem),
     o que evita que o app quebre com um upload inesperado."""
     return separador.join([(pagina.extract_text() or "") for pagina in leitor.pages])
-
-
 def remover_acentos(texto):
     """Remove acentos (ex: 'FUNDAÇÃO' -> 'FUNDACAO') para comparar textos
     vindos de sistemas diferentes que nem sempre extraem acentuação da
     mesma forma."""
     return "".join(c for c in unicodedata.normalize("NFD", texto) if unicodedata.category(c) != "Mn")
-
-
 def detectar_faixas_tagalert(texto_upper):
     """Procura no Packing List cada faixa de temperatura (ex: "TEMP 2-8 C",
     "TEMP 2-25 C", "TEMP 15-25 C") e verifica se ela está associada a um item
     com TAGALERT por perto. Classifica pelo limite superior da faixa:
     até 8°C = Refrigerado, acima disso = Ambiente.
-
     Isso é mais robusto do que checar por um texto fixo tipo "15-25" ou
     "2-30C", porque cada Packing List pode escrever a faixa de um jeito
     diferente (2-25, 20-25, 15-30, com ou sem espaço antes do "C" etc)."""
@@ -46,8 +39,6 @@ def detectar_faixas_tagalert(texto_upper):
         else:
             tem_amb = True
     return tem_ref, tem_amb
-
-
 def detectar_faixas_newse(texto_upper):
     """Igual à detectar_faixas_tagalert, mas para o texto da NEWSE (solicitação),
     que escreve a faixa de temperatura em português — "2 A 8ºC", "15 A 25ºC" —
@@ -66,8 +57,6 @@ def detectar_faixas_newse(texto_upper):
         else:
             tem_amb = True
     return tem_ref, tem_amb
-
-
 # --- Reconhecimento de medicações citotóxicas (para agrupamento de loggers) ---
 # Usada para decidir, ITEM A ITEM, se ele precisa de caixa/logger separado.
 # Tem lookahead negativo em PACLITAXEL para não confundir com PACLITAXEL NAB
@@ -86,13 +75,10 @@ CITOTOXICOS_REGEX = re.compile(r"BORTEZOMIB|SPRYCEL|DASATINIB|PACLITAXEL(?!\s*NA
 # é o mais confiável para decidir "esse item específico precisa de caixa
 # separada", então ele é combinado com a lista de nomes.
 CITOTOXICO_TEXTO_REGEX = re.compile(r"CYTOTOXIC|CITOT[ÓO]XIC")
-
 # Linha "Material  Batch   Quantidade EA  Data" que aparece uma vez para
 # cada item de uma Packing List (ex: "8 EA 30-JUN-2027"). É o ponto mais
 # estável do layout para dividir o texto em blocos, um por item.
 ITEM_ANCHOR_REGEX = re.compile(r"\d+\s*EA\s+\d{1,2}-[A-Z]{3}-\d{4}")
-
-
 def normalizar_faixa_temperatura(bloco_upper):
     """Extrai e normaliza a faixa/limite de temperatura de UM item (bloco de
     texto entre o início desse item e o início do próximo), para poder
@@ -107,8 +93,6 @@ def normalizar_faixa_temperatura(bloco_upper):
         maxv = m.group(2).replace(',', '.')
         return f"{minv}-{maxv}"
     return "FAIXA_NAO_IDENTIFICADA"
-
-
 def faixa_e_refrigerada(faixa_normalizada):
     """True = refrigerado (limite superior <= 8°C), False = ambiente,
     None = não foi possível determinar (tratado como ambiente por segurança
@@ -121,18 +105,13 @@ def faixa_e_refrigerada(faixa_normalizada):
     except ValueError:
         pass
     return None
-
-
 def item_e_citotoxico(bloco_upper):
     return bool(CITOTOXICO_TEXTO_REGEX.search(bloco_upper)) or bool(CITOTOXICOS_REGEX.search(bloco_upper))
-
-
 def analisar_itens_packing(texto_upper):
     """Divide o texto do Packing List em blocos por item (usando a linha
     Material/Batch/Quantidade/Data como âncora) e extrai, para cada item,
     qual dispositivo ele precisa (TempTale ou Tag Alert), se é uma
     medicação citotóxica e a faixa de temperatura normalizada.
-
     Isso substitui a lógica antiga, que só enxergava "o documento inteiro
     tem a palavra X" e por isso nunca conseguia contar corretamente quantos
     loggers eram realmente necessários quando havia vários itens com faixas
@@ -143,7 +122,6 @@ def analisar_itens_packing(texto_upper):
     for i, m in enumerate(posicoes):
         fim_bloco = posicoes[i + 1].start() if i + 1 < len(posicoes) else len(texto_upper)
         bloco = texto_upper[m.end():fim_bloco]
-
         dispositivo = None
         if "TEMPTALE" in bloco or "TT4" in bloco:
             dispositivo = "TEMPTALE"
@@ -151,30 +129,24 @@ def analisar_itens_packing(texto_upper):
             dispositivo = "TAGALERT"
         if dispositivo is None:
             continue  # item sem exigência de logger (ex: linha de confirmação)
-
         itens.append({
             "dispositivo": dispositivo,
             "citotoxico": item_e_citotoxico(bloco),
             "faixa": normalizar_faixa_temperatura(bloco),
         })
     return itens
-
-
 def agrupar_loggers_necessarios(itens):
     """A partir da lista de itens (ver analisar_itens_packing), decide quantos
     loggers de cada tipo são realmente necessários:
-
     - Itens do MESMO dispositivo, com a MESMA faixa de temperatura e o MESMO
       status de citotóxico podem compartilhar uma caixa e, portanto, 1 logger.
     - Itens citotóxicos NUNCA dividem caixa/logger com itens não citotóxicos
       (regra de caixa separada), mesmo que a faixa de temperatura seja igual.
-
     Retorna (qtd_temptale, qtd_tagalert_ambiente, qtd_tagalert_refrigerado,
     tem_algum_citotoxico)."""
     grupos_temptale = set()
     grupos_tagalert = set()  # chave: (citotoxico, "AMB"/"REF")
     tem_citotoxico = False
-
     for item in itens:
         if item["citotoxico"]:
             tem_citotoxico = True
@@ -184,12 +156,9 @@ def agrupar_loggers_necessarios(itens):
             refrigerado = faixa_e_refrigerada(item["faixa"])
             categoria = "REF" if refrigerado else "AMB"
             grupos_tagalert.add((item["citotoxico"], categoria))
-
     qtd_tagalert_amb = sum(1 for _, cat in grupos_tagalert if cat == "AMB")
     qtd_tagalert_ref = sum(1 for _, cat in grupos_tagalert if cat == "REF")
     return len(grupos_temptale), qtd_tagalert_amb, qtd_tagalert_ref, tem_citotoxico
-
-
 # --- Fichas de segurança obrigatórias para medicações citotóxicas ---
 # Cada entrada: (regex de reconhecimento, caminho do PDF, rótulo amigável).
 # Só existe ficha própria para essas 4 medicações — outras que o documento
@@ -202,15 +171,97 @@ FICHAS_SEGURANCA = [
     (re.compile(r"CYCLOPHOSPHAMIDE|CICLOFOSFAMIDA"), "fichas_seguranca/ficha_ciclofosfamida.pdf", "Cyclophosphamide / Ciclofosfamida"),
 ]
 
+# --- Ficha Comercial - PO para Transferências: validação de cidade por CEP ---
+def _consultar_json_url(url, timeout=8):
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def consultar_cep(cep_digits):
+    """Consulta o CEP no ViaCEP (serviço público, sem necessidade de chave) e
+    devolve {"cidade":..., "uf":...} com a cidade/UF OFICIAL daquele CEP, ou
+    None se o CEP for inválido/incompleto ou não encontrado. Esse é o
+    critério de verdade usado para validar a cidade de cada centro na Ficha
+    Comercial — texto digitado à mão em e-mail é propenso a erro (ex: um
+    centro em Barretos anotado como "São Paulo/SP" num caso real), mas o
+    CEP não mente."""
+    if not cep_digits or len(cep_digits) != 8 or not cep_digits.isdigit():
+        return None
+    dados = _consultar_json_url(f"https://viacep.com.br/ws/{cep_digits}/json/")
+    if not dados or dados.get("erro"):
+        return None
+    return {"cidade": dados.get("localidade", ""), "uf": dados.get("uf", "")}
+
+
+# Âncora de cada centro no e-mail de proposta comercial: "Centro NNNN - Nome"
+# ou apenas "NNNN - Nome" no início da linha (alguns centros no exemplo real
+# vêm sem o prefixo "Centro"). Exige de 3 a 4 dígitos antes do traço — evita
+# casar com o código do protocolo (ex: "CA266-0003", que tem letras antes).
+CENTRO_ANCHOR_REGEX = re.compile(r"^(?:Centro\s+)?(\d{3,4})\s*[-–]\s*(.+)$", re.MULTILINE)
+UF_SIGLAS = "AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO"
+
+
+def extrair_centros_proposta(texto):
+    """Divide o e-mail de proposta comercial em um bloco por centro (ver
+    CENTRO_ANCHOR_REGEX) e extrai de cada bloco o CEP e, quando reconhecível
+    no formato "Cidade/UF" (ex: "São Paulo/SP", "Curitiba/PR"), a cidade que
+    foi ESCRITA À MÃO no e-mail para aquele centro. Essa cidade escrita é
+    usada só como conferência — quem decide a cidade OFICIAL de cada centro
+    é sempre o CEP, via consultar_cep(), porque é exatamente esse texto
+    escrito à mão que já veio errado em casos reais."""
+    anchors = list(CENTRO_ANCHOR_REGEX.finditer(texto))
+    centros = []
+    for i, m in enumerate(anchors):
+        numero = m.group(1)
+        nome = m.group(2).strip()
+        fim = anchors[i + 1].start() if i + 1 < len(anchors) else len(texto)
+        bloco = texto[m.end():fim]
+        # Corta o bloco antes de um possível rodapé/despedida do e-mail, para
+        # a busca de cidade/CEP não vazar para a assinatura de quem enviou.
+        corte = re.search(r"No aguardo|Atenciosamente|Obrigad[ao]|Kind regards|Best regards", bloco, re.IGNORECASE)
+        if corte:
+            bloco = bloco[:corte.start()]
+        cep_match = re.search(r"CEP\s*:?\s*(\d{5})[\s.\-]?(\d{2,3})\b", bloco, re.IGNORECASE)
+        if not cep_match:
+            cep_match = re.search(r"\b(\d{5})-(\d{3})\b", bloco)
+        cep_digits = (cep_match.group(1) + cep_match.group(2)) if cep_match else ""
+        cep_formatado = f"{cep_match.group(1)}-{cep_match.group(2)}" if cep_match else "NÃO ENCONTRADO"
+        # Um CEP foi encontrado no texto mas não tem 8 dígitos (ex: "14784-40",
+        # 7 dígitos) — isso é sinal de e-mail com a informação do centro
+        # incompleta/errada, exatamente o tipo de erro que esta automação
+        # existe para pegar. Marcamos para exibir um alerta explícito em vez
+        # de cair silenciosamente no "não confirmado".
+        cep_incompleto = bool(cep_match) and len(cep_digits) != 8
+        # Cidade/UF escrita à mão (ex: "São Paulo/SP"). Restrito a caracteres
+        # de espaço/tab (nunca \s, que também casa quebra de linha) para que
+        # a captura não "vaze" para a linha anterior do endereço.
+        cidade_uf_match = re.search(
+            r"([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ \.]*?)[ \t]*/[ \t]*(" + UF_SIGLAS + r")\b", bloco
+        )
+        cidade_declarada = cidade_uf_match.group(1).strip() if cidade_uf_match else ""
+        uf_declarada = cidade_uf_match.group(2).strip() if cidade_uf_match else ""
+        centros.append({
+            "numero": numero,
+            "nome": nome,
+            "cep_formatado": cep_formatado,
+            "cep_digits": cep_digits,
+            "cep_incompleto": cep_incompleto,
+            "cidade_declarada": cidade_declarada,
+            "uf_declarada": uf_declarada,
+        })
+    return centros
+
 
 # --- CONFIGURAÇÕES DA PÁGINA (SaaS Logístico - Wide) ---
 st.set_page_config(page_title="DRS Group | BMS Operations", layout="wide", page_icon="🏢")
-
 # --- INJEÇÃO DE CSS (Identidade Visual DRS Group) ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-
     :root {
         --drs-verde-escuro: #12302c;
         --drs-verde: #1b3834;
@@ -220,17 +271,13 @@ st.markdown("""
         --drs-borda: #dde6e3;
         --drs-texto-2: #64748b;
     }
-
     html, body, [class*="css"], .stApp {
         font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important;
     }
-
     .stApp {
         background: radial-gradient(circle at top left, #f6faf9 0%, var(--drs-fundo) 55%);
     }
-
     header[data-testid="stHeader"] { background: rgba(0,0,0,0); }
-
     h1, h2, h3, h4, h5, h6 {
         color: var(--drs-verde) !important;
         font-weight: 700;
@@ -239,7 +286,6 @@ st.markdown("""
     h2 { font-size: 19px !important; letter-spacing: -0.2px; }
     h3 { font-size: 13px !important; text-transform: uppercase; letter-spacing: 0.6px; color: var(--drs-texto-2) !important; font-weight: 700 !important; }
     h4 { font-size: 12px !important; }
-
     /* Botões padrão (fora da sidebar) */
     .stButton>button {
         background-color: var(--drs-teal) !important;
@@ -263,7 +309,6 @@ st.markdown("""
         color: #a3adae !important;
         box-shadow: none !important;
     }
-
     /* Sidebar */
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, #ffffff 0%, #f6faf9 100%);
@@ -295,7 +340,6 @@ st.markdown("""
     [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"]:hover {
         color: var(--drs-laranja) !important;
     }
-
     /* Cartões / blocos aninhados */
     div[data-testid="stVerticalBlock"] div[data-testid="stVerticalBlock"] {
         background-color: #ffffff;
@@ -304,15 +348,12 @@ st.markdown("""
         box-shadow: 0 2px 10px rgba(18,48,44,0.06);
         border: 1px solid var(--drs-borda);
     }
-
     [data-testid="stFileUploaderDropzone"] {
         border-radius: 10px !important;
         border: 1.5px dashed #b7c9c4 !important;
         background-color: #fafcfb !important;
     }
-
     .dataframe { font-size: 12px !important; }
-
     /* Aviso fixo de pendência (não deixa passar despercebido) */
     .drs-alerta-pendente {
         position: sticky;
@@ -328,12 +369,44 @@ st.markdown("""
         margin-bottom: 16px;
         box-shadow: 0 2px 8px rgba(229,146,53,0.18);
     }
+
+    /* Independente do tema (claro/escuro) que o Streamlit está usando no
+       navegador de quem acessa, o fundo deste painel é sempre claro (ver
+       .stApp acima). Vários elementos padrão do Streamlit — texto de
+       markdown, rótulo de campo, instrução de upload, texto de tabela,
+       texto de expander etc — não têm cor própria definida em lugar
+       nenhum do app e por padrão seguem o tema do navegador; no tema
+       escuro, isso deixava esse texto praticamente da mesma cor do fundo
+       claro do card (ilegível), em todas as etapas do portal. Por isso
+       forçamos aqui uma cor escura fixa nesses elementos — não afeta os
+       títulos/textos dos banners de cada etapa (sempre brancos), porque
+       eles já têm cor definida com !important direto no próprio elemento,
+       que tem prioridade sobre uma regra por seletor como esta. */
+    [data-testid="stMarkdownContainer"] p,
+    [data-testid="stMarkdownContainer"] li,
+    [data-testid="stMarkdownContainer"] span,
+    [data-testid="stMarkdownContainer"] strong,
+    [data-testid="stMarkdownContainer"] em,
+    [data-testid="stText"],
+    [data-testid="stCaptionContainer"],
+    [data-testid="stCaptionContainer"] p,
+    [data-testid="stWidgetLabel"] p,
+    [data-testid="stWidgetLabel"] label,
+    [data-testid="stFileUploaderDropzoneInstructions"],
+    [data-testid="stFileUploaderDropzoneInstructions"] span,
+    [data-testid="stFileUploaderDropzoneInstructions"] small,
+    [data-testid="stFileUploaderFileName"],
+    [data-testid="stExpander"] summary,
+    [data-testid="stExpander"] summary p,
+    [data-testid="stExpander"] summary span,
+    .dataframe, .dataframe th, .dataframe td,
+    label {
+        color: var(--drs-verde) !important;
+    }
     </style>
 """, unsafe_allow_html=True)
-
 # --- SISTEMA DE AUTENTICAÇÃO ---
 SENHA_ACESSO = st.secrets.get("SENHA_ACESSO")
-
 if not SENHA_ACESSO:
     st.error(
         "⚠️ O acesso ainda não foi configurado. Peça ao administrador para "
@@ -341,8 +414,6 @@ if not SENHA_ACESSO:
         "Streamlit Community Cloud (menu do app → Settings → Secrets)."
     )
     st.stop()
-
-
 def tela_login(mostrar_erro):
     """Renderiza a tela de login (fundo em degradê DRS + cartão central com
     logo, título e o campo de senha). Tudo fica DENTRO de um único
@@ -356,7 +427,6 @@ def tela_login(mostrar_erro):
         .stApp { background: linear-gradient(160deg, #10281f 0%, #1b3834 45%, #12302c 100%) !important; }
         [data-testid="stSidebar"] { display: none !important; }
         header[data-testid="stHeader"] { background: rgba(0,0,0,0) !important; }
-
         .drs-login-topo {
             height: 6px; margin: -12px -12px 22px -12px;
             background: linear-gradient(90deg, var(--drs-teal), var(--drs-laranja));
@@ -389,7 +459,6 @@ def tela_login(mostrar_erro):
         }
         </style>
     """, unsafe_allow_html=True)
-
     col1, col2, col3 = st.columns([1, 1.3, 1])
     with col2:
         with st.container():
@@ -410,16 +479,12 @@ def tela_login(mostrar_erro):
             if mostrar_erro:
                 st.error("❌ Credencial inválida. Acesso negado.")
             st.markdown("<div class='drs-login-footer'>Acesso restrito · Uso interno DRS Group</div>", unsafe_allow_html=True)
-
-
 def senha_inserida_callback():
     if st.session_state["password_input"] == SENHA_ACESSO:
         st.session_state["password_correta"] = True
         del st.session_state["password_input"]
     else:
         st.session_state["password_correta"] = False
-
-
 def verificar_senha():
     if "password_correta" not in st.session_state:
         tela_login(mostrar_erro=False)
@@ -429,10 +494,8 @@ def verificar_senha():
         return False
     else:
         return True
-
 if not verificar_senha():
     st.stop()
-
 # --- CONTROLE DE SESSÃO PARA BLOQUEIO IMEDIATO ---
 if "seriais_consumidos" not in st.session_state:
     st.session_state.seriais_consumidos = set()
@@ -448,31 +511,25 @@ if "solicitacoes_brasil_registradas" not in st.session_state:
     st.session_state.solicitacoes_brasil_registradas = {}  # arquivo_id -> {itens, data_uso}
 if "brasil_uploader_key" not in st.session_state:
     st.session_state.brasil_uploader_key = 0
-
 # --- CARREGAR DADOS E ESTOQUE ---
 @st.cache_data(ttl=1)
 def carregar_dados_sheets():
     id_estoque = st.secrets.get("ID_PLANILHA_ESTOQUE", "10f18RZ-48HiJS2HckG6Siw2WRE9zz92_Pj6chkTwXik")
     gid_estoque = st.secrets.get("GID_PLANILHA_ESTOQUE", "667151981")
     id_loggers = st.secrets.get("ID_PLANILHA_LOGGERS", "1ztZC3s0kKINJLNOR-BEYUUFjycxSVT7NMGVNWdxWh98")
-
     cb = int(time.time())
     # gid fixo (aba "ESTOQUE" confirmada com o usuário) em vez de depender de
     # qual aba está posicionada primeiro na planilha — evita que a leitura
     # "pule" para outra aba se alguém reordenar ou criar uma aba nova antes dela.
     url_estoque = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv&gid={gid_estoque}&cb={cb}"
     url_tes = f"https://docs.google.com/spreadsheets/d/{id_loggers}/export?format=csv&gid=536812026&cb={cb}"
-
     try: df_est = pd.read_csv(url_estoque)
     except: df_est = None
-
     if df_est is not None:
         try:
             df_est['Descricao_Clean'] = df_est['Descricao'].astype(str).str.upper()
-
             col_serie_est = next((c for c in df_est.columns if "SERIE" in c.upper() or "SÉRIE" in c.upper()), None)
             col_id_est = next((c for c in df_est.columns if "IDENTIFICACAO" in c.upper() or "ID" in c.upper()), None)
-
             if col_serie_est and st.session_state.seriais_consumidos:
                 df_est = df_est[~df_est[col_serie_est].astype(str).str.strip().isin(st.session_state.seriais_consumidos)]
             if col_id_est and st.session_state.ids_consumidos:
@@ -481,22 +538,18 @@ def carregar_dados_sheets():
             # Nome de coluna mudou na planilha (ex: "Descricao" -> "Descrição"):
             # evita derrubar o app inteiro para todo mundo, só desativa o estoque.
             df_est = None
-
     try:
         df_tes = pd.read_csv(url_tes)
         if len(df_tes.columns) >= 2:
             df_tes = df_tes.iloc[:, [0, 1]]
             df_tes.columns = ['Estudo', 'TE']
     except: df_tes = None
-        
+
     return df_est, df_tes
-
 df_estoque, df_te = carregar_dados_sheets()
-
 # --- LÓGICA DE NAVEGAÇÃO DE PÁGINAS ---
 if "pagina_atual" not in st.session_state:
     st.session_state.pagina_atual = "automacao"
-
 # --- BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.markdown("""
@@ -505,7 +558,6 @@ with st.sidebar:
             <p style="margin: 4px 0 0 0; font-size: 10px; color: #94a3ab; font-weight: 700; letter-spacing: 1.5px;">BMS OPERATIONS</p>
         </div>
     """, unsafe_allow_html=True)
-
     st.markdown("""
         <div style="display: flex; align-items: center; margin-bottom: 2px;">
             <div style="width: 8px; height: 8px; border-radius: 50%; background-color: #28a745; margin-right: 6px; box-shadow: 0 0 4px #28a745;"></div>
@@ -513,15 +565,14 @@ with st.sidebar:
         </div>
         <p style="font-size: 10px; color: #28a745; margin-top: 0px; margin-left: 14px; font-weight: bold; margin-bottom: 14px;">Sistema Apto para Uso</p>
     """, unsafe_allow_html=True)
-
     st.markdown("<p style='font-size: 10px; color: #94a3ab; font-weight: 700; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.6px;'>Navegação</p>", unsafe_allow_html=True)
-
     bloqueado = st.session_state.alocacao_pendente
     paginas_menu = [
         ("automacao", "📦  Automação de Packing List"),
         ("cruzamento", "⚖️  Cruzamento NEWSE x PACKING"),
         ("conferencia_agendamento", "🧾  Conferência de Agendamento"),
         ("bms_brasil", "🇧🇷  BMS Brasil - Solicitações"),
+        ("ficha_comercial", "🚚  Ficha Comercial - PO Transferências"),
         ("email", "📧  Gerador de E-mail (GR)"),
     ]
     for chave, rotulo in paginas_menu:
@@ -535,16 +586,12 @@ with st.sidebar:
         ):
             st.session_state.pagina_atual = chave
             st.rerun()
-
     if bloqueado:
         st.caption("🔒 Finalize a baixa em andamento (preencha o DEL# e confirme) para liberar a navegação.")
-
     st.write("")
-
     raw_tt = len(df_estoque[df_estoque['Descricao_Clean'].str.contains("TEMPTALE", na=False)]) if df_estoque is not None else 0
     raw_ta_amb = len(df_estoque[df_estoque['Descricao_Clean'].str.contains("TAGALERT 15-25", na=False)]) if df_estoque is not None else 0
     raw_ta_ref = len(df_estoque[df_estoque['Descricao_Clean'].str.contains("TAGALERT 2-8", na=False)]) if df_estoque is not None else 0
-
     st.markdown(f"""
         <div style="font-size: 11px; color: #4a5568; margin-top: 5px; margin-bottom: 5px; line-height: 1.6; background-color: #ffffff; padding: 12px 14px; border-radius: 10px; border: 1px solid #dde6e3; border-left: 4px solid #e59235; box-shadow: 0 2px 8px rgba(18,48,44,0.05);">
             <b style="font-size: 10px; color: #1b3834; letter-spacing: 0.4px;">LOGGERS DISPONÍVEIS</b><br>
@@ -553,7 +600,6 @@ with st.sidebar:
             <div style="display:flex; justify-content:space-between;"><span>TempTale Ambiente</span><b style="color: #209b7c;">{raw_tt}</b></div>
         </div>
     """, unsafe_allow_html=True)
-
 def card_metrica(titulo, valor):
     return f"""
     <div style="background-color: #ffffff; padding: 14px 16px; border-radius: 10px; border: 1px solid #dde6e3; border-top: 3px solid #209b7c; box-shadow: 0 2px 8px rgba(18,48,44,0.05);">
@@ -561,13 +607,11 @@ def card_metrica(titulo, valor):
         <p style="margin: 5px 0 0 0; font-size: 17px; color: #1b3834; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{valor}">{valor}</p>
     </div>
     """
-
 # ==========================================
-# ROTEADOR DE PÁGINAS 
+# ROTEADOR DE PÁGINAS
 # ==========================================
-
 if st.session_state.pagina_atual == "automacao":
-    
+
     st.markdown("""
         <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
             <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">📦 Automação de Packing List (SLA e Estoque)</h2>
@@ -576,7 +620,6 @@ if st.session_state.pagina_atual == "automacao":
             </p>
         </div>
     """, unsafe_allow_html=True)
-
     FERIADOS = [datetime(2026, 9, 7).date()]
     def is_dia_util(data): return data.weekday() < 5 and data not in FERIADOS
     def proximo_dia_util(data_atual):
@@ -590,7 +633,6 @@ if st.session_state.pagina_atual == "automacao":
             data_atual = proximo_dia_util(data_atual)
             dias_adicionados += 1
         return data_atual
-
     col_pdf, col_data = st.columns([3, 1])
     with col_pdf:
         arquivo_pdf = st.file_uploader(
@@ -599,7 +641,6 @@ if st.session_state.pagina_atual == "automacao":
             key=f"packing_{st.session_state.packing_uploader_key}",
         )
     with col_data: data_recebimento = st.date_input("Data de Recebimento", datetime.today())
-
     if arquivo_pdf is None:
         # Sem PDF anexado nesta tela: nada foi de fato retirado do estoque
         # (isso só acontece depois que "Executar Baixa" confirma sucesso), então
@@ -607,11 +648,9 @@ if st.session_state.pagina_atual == "automacao":
         # uma alocação pendente simplesmente removendo o arquivo (clicando no
         # "x" do upload), em vez de ficar preso até preencher um DEL#.
         st.session_state.alocacao_pendente = False
-
     if arquivo_pdf is not None:
         leitor = PdfReader(arquivo_pdf)
         texto_upper = extrair_texto_pdf(leitor).upper()
-
         estudo_encontrado = "NÃO IDENTIFICADO"
         match_protocolo = re.search(r"PROTOCOL\s*NUMBER\s*[:\s]*([A-Z0-9\-\/]+)", texto_upper)
         if match_protocolo: estudo_encontrado = match_protocolo.group(1).split('/')[0].strip()
@@ -619,13 +658,11 @@ if st.session_state.pagina_atual == "automacao":
             for palavra in texto_upper.split():
                 if palavra.startswith("CA") and "-" in palavra:
                     estudo_encontrado = palavra.split('/')[0].strip(); break
-
         te_resultado = "NÃO ENCONTRADO"
         if df_te is not None:
             for idx, row in df_te.iterrows():
                 if estudo_encontrado in str(row['Estudo']).upper():
                     te_resultado = str(row['TE']).strip(); break
-
         # --- Análise por item (quantos loggers de cada tipo são realmente necessários) ---
         # Divide a Packing List em blocos, um por item, e agrupa por (dispositivo,
         # citotóxico, faixa de temperatura) — ver analisar_itens_packing/
@@ -634,7 +671,6 @@ if st.session_state.pagina_atual == "automacao":
         # isso não conseguia contar corretamente quantos loggers eram necessários
         # quando havia mais de um item com faixas de temperatura diferentes.
         itens_detectados = analisar_itens_packing(texto_upper)
-
         if itens_detectados:
             qtd_temptale, qtd_tagalert_amb, qtd_tagalert_ref, tem_citotoxico = agrupar_loggers_necessarios(itens_detectados)
         else:
@@ -649,11 +685,9 @@ if st.session_state.pagina_atual == "automacao":
             qtd_temptale = (1 if tem_temptale_doc else 0) + (1 if tem_citotoxico and tem_temptale_doc else 0)
             qtd_tagalert_amb = 1 if tem_tagalert_amb_doc else 0
             qtd_tagalert_ref = 1 if tem_tagalert_ref_doc else 0
-
         tem_temptale = qtd_temptale > 0
         tem_tagalert_amb = qtd_tagalert_amb > 0
         tem_tagalert_ref = qtd_tagalert_ref > 0
-
         cidade_destino = "NÃO IDENTIFICADA"
         linhas = texto_upper.split('\n')
         for i, linha in enumerate(linhas):
@@ -661,25 +695,20 @@ if st.session_state.pagina_atual == "automacao":
                 for j in range(max(0, i-2), min(len(linhas), i+6)):
                     if any(c in linhas[j] for c in ["NATAL", "RIO DE JANEIRO", "CURITIBA", "BELO HORIZONTE", "PORTO ALEGRE", "SALVADOR", "BRASILIA", "SÃO PAULO", "SAO PAULO", "CAMPINAS", "RIBEIRAO PRETO", "JAU", "SAO JOSE"]):
                         cidade_destino = "SÃO PAULO (CAPITAL)" if "PAULO" in linhas[j] else linhas[j].strip(); break
-
         is_capital = "SÃO PAULO (CAPITAL)" in cidade_destino and not any(exc in cidade_destino for exc in ["JAÚ", "RIO PRETO", "RIBEIRÃO", "CAMPOS"])
-
         st.success("✅ Documento processado com sucesso.")
-        
+
         c1, c2, c3 = st.columns(3)
         with c1: st.markdown(card_metrica("Destino", cidade_destino), unsafe_allow_html=True)
         with c2: st.markdown(card_metrica("Protocolo / Estudo", estudo_encontrado), unsafe_allow_html=True)
         with c3: st.markdown(card_metrica("TE Correspondente", te_resultado), unsafe_allow_html=True)
-        st.write("") 
-
+        st.write("")
         st.markdown("### 📦 Separação e Baixa de Estoque")
-
         # Identidade estável deste upload — usada para lembrar se a baixa
         # já foi registrada para ESTE arquivo específico (evita duplicar
         # a alocação/baixa se a página recarregar com o mesmo PDF ainda anexado).
         arquivo_id = getattr(arquivo_pdf, "file_id", None) or f"{arquivo_pdf.name}_{arquivo_pdf.size}"
         registro_existente = st.session_state.baixas_registradas.get(arquivo_id)
-
         if registro_existente:
             st.session_state.alocacao_pendente = False
             ids_utilizados = registro_existente["itens"]
@@ -692,7 +721,6 @@ if st.session_state.pagina_atual == "automacao":
             st.caption("Para dar baixa em um novo envio, envie um novo arquivo PDF acima.")
         else:
             ids_utilizados = []
-
             if df_estoque is not None and not df_estoque.empty:
                 df_estoque_temp = df_estoque.copy()
                 def allocate_logger(nome_busca, label):
@@ -702,7 +730,6 @@ if st.session_state.pagina_atual == "automacao":
                     if not filtro.empty:
                         item = filtro.iloc[0]
                         df_estoque_temp.drop(item.name, inplace=True)
-
                         serie = next((str(item[c]) for c in item.index if "SERIE" in c.upper() or "SÉRIE" in c.upper()), str(item.iloc[7]) if len(item)>7 else "N/A")
                         ids_utilizados.append({
                             "label": label,
@@ -713,7 +740,6 @@ if st.session_state.pagina_atual == "automacao":
                         st.info(f"**{label}** alocado ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')} | Série: {serie}")
                     else:
                         st.warning(f"⚠️ **{label}**: Sem saldo disponível no estoque!")
-
                 # Aloca exatamente a quantidade de cada logger que os itens desta
                 # Packing List realmente precisam (ver análise por item acima) —
                 # itens citotóxicos com faixa/dispositivo diferentes dos demais já
@@ -729,7 +755,6 @@ if st.session_state.pagina_atual == "automacao":
                 for i in range(qtd_tagalert_ref):
                     rotulo = "Tag Alert Refrigerado" if qtd_tagalert_ref == 1 else f"Tag Alert Refrigerado ({i + 1}/{qtd_tagalert_ref})"
                     allocate_logger("TAGALERT 2-8", rotulo)
-
                 if tem_citotoxico:
                     st.markdown(
                         "<div style='font-size:12px; color:#92400e; background:#fff7ed; border:1px solid #fdba74; "
@@ -737,7 +762,6 @@ if st.session_state.pagina_atual == "automacao":
                         "— por regra, essa carga segue em caixa separada (já refletido na quantidade de loggers acima).</div>",
                         unsafe_allow_html=True
                     )
-
                 # --- Fichas de segurança obrigatórias (citotóxicos) ---
                 fichas_encontradas = [
                     (path, rotulo) for regex, path, rotulo in FICHAS_SEGURANCA if regex.search(texto_upper)
@@ -764,11 +788,9 @@ if st.session_state.pagina_atual == "automacao":
                                     )
                             else:
                                 st.warning(f"⚠️ Ficha de {rotulo_ficha} não encontrada no sistema.")
-
                 # Enquanto houver itens alocados e a baixa ainda não foi confirmada,
                 # trava a navegação para outras páginas (ver barra lateral).
                 st.session_state.alocacao_pendente = bool(ids_utilizados)
-
                 if ids_utilizados:
                     st.markdown(
                         "<div class='drs-alerta-pendente'>⚠️ Alocação pendente de confirmação — preencha o DEL# "
@@ -782,7 +804,6 @@ if st.session_state.pagina_atual == "automacao":
                     )
                 else:
                     components.html("<script>window.parent.onbeforeunload = null;</script>", height=0)
-
                 col_del, col_btn = st.columns([2, 1])
                 with col_del: delivery_number = st.text_input("DEL# (Delivery Number) para registro:")
                 with col_btn:
@@ -795,7 +816,6 @@ if st.session_state.pagina_atual == "automacao":
                                 "WEBHOOK_BAIXA_ESTOQUE",
                                 "https://script.google.com/macros/s/AKfycbzpwZC2LW7PQ1JGMkJIZD3Rxd4nv4pfEZ1QS1D9jDxQbt4Qf2hiCmv9dJ8pAJnBHJglug/exec"
                             )
-
                             payload = {
                                 "data_uso": datetime.today().strftime('%d/%m/%Y'),
                                 "delivery_number": delivery_number,
@@ -811,7 +831,6 @@ if st.session_state.pagina_atual == "automacao":
                                     } for p in ids_utilizados
                                 ]
                             }
-
                             try:
                                 req = urllib.request.Request(
                                     webhook_url,
@@ -823,7 +842,6 @@ if st.session_state.pagina_atual == "automacao":
                                     resposta = json.loads(resposta_bruta)
                                 except ValueError:
                                     resposta = {}
-
                                 # O Apps Script sempre responde com HTTP 200, mesmo quando ele
                                 # mesmo capturou um erro internamente (planilha/aba não encontrada,
                                 # item não localizado etc). Por isso não basta a chamada não ter
@@ -833,26 +851,22 @@ if st.session_state.pagina_atual == "automacao":
                                     raise RuntimeError(
                                         resposta.get("message", f"Resposta inesperada do servidor: {resposta_bruta[:300]}")
                                     )
-
                                 # Só marca os itens como consumidos (some da visão de todo mundo)
                                 # e só trava o arquivo como "já processado" DEPOIS de confirmar
                                 # que a planilha central foi atualizada com sucesso.
                                 for p in ids_utilizados:
                                     st.session_state.seriais_consumidos.add(str(p["serie"]).strip())
                                     st.session_state.ids_consumidos.add(str(p["id_est"]).strip())
-
                                 st.session_state.baixas_registradas[arquivo_id] = {
                                     "delivery_number": delivery_number,
                                     "itens": ids_utilizados,
                                     "data_uso": datetime.today().strftime('%d/%m/%Y %H:%M'),
                                 }
                                 st.session_state.alocacao_pendente = False
-
                                 # Troca a "key" do uploader para a próxima renderização —
                                 # isso faz o Streamlit tratá-lo como um campo novo/vazio,
                                 # limpando o PDF anexado automaticamente (sem precisar de F5).
                                 st.session_state.packing_uploader_key += 1
-
                                 st.cache_data.clear()
                                 itens_txt = ", ".join([p["label"] for p in ids_utilizados])
                                 st.success(f"✅ Baixa executada com sucesso! DEL# **{delivery_number}** usado para: {itens_txt}.")
@@ -862,46 +876,44 @@ if st.session_state.pagina_atual == "automacao":
                                 st.error(f"Erro ao atualizar planilha: {ex}")
             else:
                 st.warning("⚠️ Estoque indisponível no momento — não é possível alocar loggers automaticamente.")
-
         st.markdown("### 📋 Dados para Restrição e Particularidades")
         val_depositante = "056998982001260"
         val_palete = " | ".join([p["palete"] for p in ids_utilizados]) or "N/A"
         val_id = " | ".join([p["id_est"] for p in ids_utilizados]) or "N/A"
         val_te = te_resultado
-        
+
         def btn_copia(rotulo, valor, uid):
             html = f"""<div style="display:flex; justify-content:space-between; align-items: center; padding:6px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; margin-bottom:5px;">
             <div><span style="color:#475569; font-weight:bold; font-size:11px;">{rotulo}:</span> <span style="font-family:monospace; color:#209b7c; font-size:13px; font-weight:bold; margin-left:5px;">{valor}</span></div>
             <button onclick="navigator.clipboard.writeText('{valor}'); this.innerText='Copiado!'; setTimeout(()=>this.innerText='Copiar', 2000)" style="background:#209b7c; color:white; border:none; border-radius:3px; cursor:pointer; font-size:11px; padding:4px 10px; font-weight:bold;">Copiar</button></div>"""
             components.html(html, height=45)
-            
+
         c_esq, c_dir = st.columns(2)
         with c_esq: btn_copia("DEPOSITANTE", val_depositante, "d"); btn_copia("PALETE", val_palete, "p")
         with c_dir: btn_copia("ID ITEM", val_id, "i"); btn_copia("TE DO ESTUDO", val_te, "t")
-
         # --- CONSTRUÇÃO DAS PARTICULARIDADES COM REGRAS DE CITOTÓXICOS ---
         paragrafos = [
             "Verificar se no processo consta Packing List e atentar se a quantidade, lote e validade está de acordo com as informações retiradas do sistema LOGIX."
         ]
-        
-        if tem_temptale: 
+
+        if tem_temptale:
             paragrafos.extend([
-                "Houve envio de medicação AMBIENTE.", 
+                "Houve envio de medicação AMBIENTE.",
                 "As medicações foram acondicionadas em embalagem apropriada CREDO validada pelo cliente com TempTale ULTRA USB ambiente conforme solicitado pelo cliente."
             ])
-        if tem_tagalert_amb: 
+        if tem_tagalert_amb:
             paragrafos.extend([
-                "Houve envio de medicação AMBIENTE.", 
+                "Houve envio de medicação AMBIENTE.",
                 "As medicações foram acondicionadas em embalagem CREDO com Tag Alert ambiente conforme solicitado pelo cliente."
             ])
-        if tem_tagalert_ref: 
+        if tem_tagalert_ref:
             paragrafos.extend([
-                "Houve envio de medicação REFRIGERADA.", 
+                "Houve envio de medicação REFRIGERADA.",
                 "As medicações foram acondicionadas em embalagem apropriada caixa CREDO SÉRIE 04 com Tag Alert refrigerado conforme solicitado pelo cliente."
             ])
-            
+
         paragrafos.append("Time DOC: Não aplicar o desconto padrão de 1 hora na SC de Envio caso o centro já tenha reduzido o período no agendamento.")
-        
+
         # Detecção e adição das regras específicas de Citotóxicos
         if "BORTEZOMIB" in texto_upper:
             paragrafos.extend([
@@ -912,7 +924,6 @@ if st.session_state.pagina_atual == "automacao":
                 "A etiqueta do Logger USB deve ir colada na Packing List de envio.",
                 "Produtos com temperaturas diferentes seguirão em caixas separadas quando houver a necessidade de TT4."
             ])
-
         if "SPRYCEL" in texto_upper or "DASATINIB" in texto_upper:
             paragrafos.extend([
                 "As medicações foram acondicionadas em embalagem apropriada CREDO 28L validada pelo cliente com Tag Alert ambiente conforme solicitado pelo cliente.",
@@ -921,7 +932,6 @@ if st.session_state.pagina_atual == "automacao":
                 "Para envios da medicação DASATINIB ou SPRYCEL, deverá ser encaminhado em caixa separada quando houver envio de mais medicações.",
                 "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 6.1” quando houver o envio de “DASATINIB OU SPRYCEL."
             ])
-
         if re.search(r"PACLITAXEL|TAXOL", texto_upper):
             paragrafos.extend([
                 "As medicações foram acondicionadas em embalagem apropriada CREDO 28L validada pelo cliente com Tag Alert ambiente conforme solicitado pelo cliente.",
@@ -931,7 +941,6 @@ if st.session_state.pagina_atual == "automacao":
                 "Para envios da medicação PACLITAXEL ou TAXOL, será anexado ficha de segurança do produto.",
                 "Para envios da medicação PACLITAXEL ou TAXOL, deverá ser encaminhado em caixa separada quando houver envio de mais medicações."
             ])
-
         if "CYCLOPHOSPHAMIDE" in texto_upper or "CICLOFOSFAMIDA" in texto_upper:
             paragrafos.extend([
                 "As medicações foram acondicionadas em embalagem apropriada CREDO 28L com Tag Alert ambiente conforme solicitado pelo cliente.",
@@ -942,25 +951,22 @@ if st.session_state.pagina_atual == "automacao":
                 "A etiqueta do Logger USB deve ir colada na Packing List de envio.",
                 "Produtos com temperaturas diferentes seguirão em caixas separadas quando houver a necessidade de TT4."
             ])
-
         texto_final = "\n\n".join(paragrafos)
         components.html(f"""<button onclick="navigator.clipboard.writeText(`{texto_final}`); this.innerText='📋 Texto Copiado!';" style="background:#e59235; color:white; font-size:13px; font-weight:bold; padding:8px; border:none; border-radius:4px; width:100%; cursor:pointer;">📋 Copiar Particularidades</button>""", height=40)
-
         st.markdown("### ⏱️ SLA e Prazos Operacionais")
         prazo_maximo = somar_dias_uteis(data_recebimento, 7)
         data_limite_doc = somar_dias_uteis(data_recebimento, 2)
-        
+
         if tem_tagalert_ref and not is_capital:
             data_entrega = somar_dias_uteis(data_limite_doc, 2)
             st.warning(f"🚨 **ALERTA REFRIGERADO (FLY):** Validade 96h ativada. Entrega sugerida: {data_entrega.strftime('%d/%m/%Y')}")
         else:
             st.info(f"✅ **FLUXO PADRÃO.** Prazo DOC: {data_limite_doc.strftime('%d/%m/%Y')} | Limite Final: {prazo_maximo.strftime('%d/%m/%Y')}")
-
 # ==========================================
 # PÁGINA 3: CRUZAMENTO SOLICITAÇÃO x PACKING (ASSISTENTE DE CONFERÊNCIA)
 # ==========================================
 elif st.session_state.pagina_atual == "cruzamento":
-    
+
     st.markdown("""
         <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
             <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">⚖️ Assistente de Conferência - Validação de Remessa</h2>
@@ -970,22 +976,19 @@ elif st.session_state.pagina_atual == "cruzamento":
             </p>
         </div>
     """, unsafe_allow_html=True)
-    
+
     if "file_uploader_key" not in st.session_state:
         st.session_state.file_uploader_key = 0
-
     col_btn_limpar, col_vazio = st.columns([1, 4])
     with col_btn_limpar:
         if st.button("🗑️ Limpar Arquivos", use_container_width=True):
             st.session_state.file_uploader_key += 1
             st.rerun()
-
     col1, col2 = st.columns(2)
     with col1:
         arquivo_sol = st.file_uploader("Upload da Solicitação (PDF)", type=["pdf"], key=f"sol_{st.session_state.file_uploader_key}")
     with col2:
         arquivo_packing = st.file_uploader("Upload da Packing List / Shipment (PDF)", type=["pdf"], key=f"pack_{st.session_state.file_uploader_key}")
-
     if arquivo_sol and arquivo_packing:
         st.divider()
         if st.button("Executar Conferência Estritamente", use_container_width=True):
@@ -998,14 +1001,11 @@ elif st.session_state.pagina_atual == "cruzamento":
                     # comparar sem acento evita divergência falsa só por causa disso.
                     texto_sol_upper = remover_acentos(texto_sol.upper())
                     texto_sol_limpo = re.sub(r'\s+', ' ', texto_sol)
-
                     leitor_packing = PdfReader(arquivo_packing)
                     texto_packing = extrair_texto_pdf(leitor_packing, " ")
                     texto_packing_upper = remover_acentos(texto_packing.upper())
                     texto_packing_limpo = re.sub(r'\s+', ' ', texto_packing)
-
                     def limpar(t): return re.sub(r'\s+', ' ', str(t)).strip()
-
                     # --- Grupos de instituições conhecidas (para o campo Centre/Depto) ---
                     # Cada grupo tem palavras-chave que podem aparecer com nomes
                     # diferentes na NEWSE e no Packing List (sistemas diferentes,
@@ -1021,46 +1021,36 @@ elif st.session_state.pagina_atual == "cruzamento":
                         ("ICESP", ["ICESP", "INSTITUTO DO CANCER"]),
                         ("HOSPITAL MOINHOS DE VENTO", ["MOINHOS DE VENTO"]),
                     ]
-
                     def identificar_centro(texto):
                         for nome_grupo, palavras in GRUPOS_CENTRO:
                             if any(p in texto for p in palavras):
                                 return nome_grupo
                         return "NÃO CONSTA"
-
                     # --- EXTRAÇÃO DOCUMENTO FONTE (SOLICITAÇÃO / NEWSE) ---
                     s_prot_match = re.search(r"(CA\d+-\d+)", texto_sol_upper)
                     s_prot = s_prot_match.group(1) if s_prot_match else "NÃO CONSTA"
-
                     # Na NEWSE, o campo "Número da ordem" é onde o número do Delivery
                     # (não do Order) da BMS acaba sendo registrado — por isso o termo
                     # em português "ORDEM" entra na busca, junto dos termos em inglês.
                     s_ship_match = re.search(r"(?:NUMERO DA ORDEM|ORDEM|ORDER|SHIPMENT)[^\d]*(\d{8,12})", texto_sol_upper)
                     s_ship = s_ship_match.group(1) if s_ship_match else (re.search(r"\b(8\d{9})\b", texto_sol_limpo).group(1) if re.search(r"\b(8\d{9})\b", texto_sol_limpo) else "NÃO CONSTA")
-
                     s_centre = identificar_centro(texto_sol_upper)
-
                     s_cep_match = re.search(r"CEP[^\d]*(\d{5}-?\d{3})", texto_sol_upper)
                     s_addr = s_cep_match.group(1).replace("-", "") if s_cep_match else (re.search(r"\b(\d{8})\b", texto_sol_upper).group(1) if re.search(r"\b(\d{8})\b", texto_sol_upper) else "NÃO CONSTA")
-
                     # --- EXTRAÇÃO DOCUMENTO VALIDADO (PACKING LIST) ---
                     p_prot_match = re.search(r"PROTOCOL NUMBER\s*[:\s]*([A-Z0-9\-\/]+)", texto_packing_upper)
                     if p_prot_match:
                         p_prot_raw = p_prot_match.group(1).split('/')[0].strip()
-                        p_prot_match2 = re.search(r"(CA\d+-\d+)", p_prot_raw)
+                        p_prot_match2 = re.search(r"(CA\d+-\d+)", p_prot_raw.upper())
                         p_prot = p_prot_match2.group(1) if p_prot_match2 else p_prot_raw
                     else:
                         p_prot = "NÃO CONSTA"
-
                     p_ship_match = re.search(r"(?:DELIVERY NUMBER|SHIPMENT)\s*[:\s]*(\d{8,12})", texto_packing_upper)
                     p_ship = p_ship_match.group(1) if p_ship_match else "NÃO CONSTA"
-
                     p_shipto_bloco = texto_packing_upper.split("SHIP TO")[-1] if "SHIP TO" in texto_packing_upper else texto_packing_upper
                     p_centre = identificar_centro(p_shipto_bloco)
-
                     p_cep_match = re.search(r"(\d{5}-?\d{3})", p_shipto_bloco)
                     p_addr = p_cep_match.group(1).replace("-", "") if p_cep_match else "NÃO CONSTA"
-
                     # --- Investigator Name ---
                     # O Packing List tem um formato limpo e consistente ("Dr(a).
                     # Fulano de Tal" seguido de "Tel:"), muito mais confiável do que
@@ -1071,7 +1061,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                     # investigador novo com uma falsa divergência.
                     p_pi_match = re.search(r"DR\.?A?\.?\s+([A-Z][A-Z\s]+?)\s*TEL\s*:", texto_packing_upper)
                     p_pi = limpar(p_pi_match.group(1)) if p_pi_match else "NÃO CONSTA"
-
                     # Comparação tolerante a pequenas diferenças de grafia/digitação
                     # entre os sistemas (ex: nome do meio duplicado ou digitado com
                     # uma letra diferente no Packing List). Em vez de exigir o nome
@@ -1088,17 +1077,14 @@ elif st.session_state.pagina_atual == "cruzamento":
                             pi_exato = True
                         elif len(palavras_pi) >= 2 and palavras_pi[0] in texto_sol_upper and palavras_pi[-1] in texto_sol_upper:
                             pi_investigador_conferido = True
-
                     if pi_investigador_conferido:
                         s_pi = p_pi if pi_exato else f"{p_pi} (confirmado por nome/sobrenome — grafia difere no meio)"
                     elif p_pi != "NÃO CONSTA":
                         s_pi = "NÃO ENCONTRADO NA NEWSE"
                     else:
                         s_pi = "NÃO CONSTA"
-
                     p_qty_matches = re.findall(r"(\d+)\s*EA", texto_packing_upper)
                     p_qty = str(sum([int(q) for q in p_qty_matches])) if p_qty_matches else "NÃO CONSTA"
-
                     # Coleta de Seriais da Packing List (Documento Validado)
                     seriais_packing = []
                     serial_matches = re.findall(r"SERIAL\s*NO\.?\s*\(([^)]+)\)", texto_packing_upper)
@@ -1115,7 +1101,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                     else:
                         seriais_packing = re.findall(r"\b\d{5,8}\b", texto_packing_upper)
                     seriais_packing = list(dict.fromkeys(seriais_packing))
-
                     # Coleta de Seriais da NEWSE — extraídos da própria tabela de
                     # produtos da NEWSE (número que aparece logo antes de "AREA
                     # CLIMATIZADA" ou "CAMARA FRIA" em cada linha), em vez de apenas
@@ -1135,13 +1120,10 @@ elif st.session_state.pagina_atual == "cruzamento":
                         # rede de segurança em vez de não comparar nada.
                         seriais_newse = [s for s in seriais_packing if s in texto_sol_upper]
                     seriais_newse = list(dict.fromkeys(seriais_newse))
-
                     seriais_faltantes_na_newse = [s for s in seriais_packing if s not in seriais_newse]
                     seriais_a_mais_na_newse = [s for s in seriais_newse if s not in seriais_packing]
                     seriais_status_ok = not seriais_faltantes_na_newse and not seriais_a_mais_na_newse and len(seriais_packing) > 0
-
                     s_qty = str(len(seriais_newse)) if seriais_newse else "NÃO CONSTA"
-
                     # --- COMPARAÇÃO ESTRITA ---
                     # Confirmação cruzada: quando o nome da instituição não é
                     # reconhecido em nenhum dos dois documentos (ou está escrito de
@@ -1155,7 +1137,6 @@ elif st.session_state.pagina_atual == "cruzamento":
                         and s_addr != "NÃO CONSTA" and s_addr == p_addr
                     )
                     centro_ok = centro_confirmado_por_alias or centro_confirmado_por_cep
-
                     dados_validacao = [
                         {
                             "Campo Validado": "Dados de Protocolo",
@@ -1218,33 +1199,26 @@ elif st.session_state.pagina_atual == "cruzamento":
                             )
                         }
                     ]
-
                     df = pd.DataFrame(dados_validacao)
-
                     def estilizar_status(val):
                         if "Divergência" in val or "Ausente" in val:
                             return f'<span style="color:red">{val}</span>'
                         return val
-
                     df_exibicao = df.copy()
                     df_exibicao["Status"] = df_exibicao["Status"].apply(estilizar_status)
-
                     st.markdown("### Tabela de Validação de Remessa")
                     html_tabela = df_exibicao.to_html(escape=False, index=False, classes="dataframe")
                     st.markdown(f"<div style='overflow-x:auto;'>{html_tabela}</div>", unsafe_allow_html=True)
-
                     tem_divergencia = any("Divergência" in row["Status"] for row in dados_validacao)
-                    
+
                     st.markdown("---")
                     st.markdown("### Resumo Executivo")
                     if tem_divergencia:
                         st.error("🔴 **Classificação Final:** Reprovado por Divergência (Há inconsistências críticas entre os documentos ou seriais ausentes).")
                     else:
                         st.success("🟢 **Classificação Final:** Aprovado (Todos os campos e seriais conferem integralmente sem divergências).")
-
                 except Exception as e:
                     st.error(f"Erro na execução da conferência: {e}")
-
 # ==========================================
 # PÁGINA: CONFERÊNCIA DE AGENDAMENTO (Packing List x NEWSE x Agendamento x Minuta)
 # ==========================================
@@ -1256,7 +1230,6 @@ elif st.session_state.pagina_atual == "cruzamento":
 # documentos e comparado de verdade, com o valor de cada lado sempre visível
 # na tela — nunca só "Verificar PDF".
 elif st.session_state.pagina_atual == "conferencia_agendamento":
-
     st.markdown("""
         <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #6d28d9; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
             <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">🧾 Conferência de Agendamento — Packing List, NEWSE, Agendamento e Minuta</h2>
@@ -1267,14 +1240,12 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
             </p>
         </div>
     """, unsafe_allow_html=True)
-
     if "conferencia_uploader_key" not in st.session_state:
         st.session_state.conferencia_uploader_key = 0
     if "conf_etapa3_resultado" not in st.session_state:
         st.session_state.conf_etapa3_resultado = None
     if "conf_etapa3_confirmado" not in st.session_state:
         st.session_state.conf_etapa3_confirmado = False
-
     col_excluir, col_excluir_vazio = st.columns([1, 4])
     with col_excluir:
         if st.button("🗑️ Excluir PDFs", key="conf_excluir_topo", use_container_width=True):
@@ -1286,24 +1257,20 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
             st.session_state.conf_etapa3_resultado = None
             st.session_state.conf_etapa3_confirmado = False
             st.rerun()
-
     def extrair_texto_pdf_conferencia(arquivo):
         """Mesma extração usada no resto do portal (pypdf), mas mantendo uma
         quebra de linha entre páginas — os regex desta página dependem de
         '\\n' para não vazar de uma linha para a próxima."""
         leitor_conf = PdfReader(arquivo)
         return extrair_texto_pdf(leitor_conf, separador="\n")
-
     def normalizar_alfanum(t):
         """Maiúsculo e só letras/dígitos — remove espaço, hífen, barra, ponto
         etc. Usado para achar um Lote dentro do texto da NEWSE mesmo quando a
         extração do PDF grudou/quebrou a formatação original (comum em
         tabelas de PDF)."""
         return re.sub(r"[^A-Z0-9]", "", str(t).upper())
-
     def so_digitos(t):
         return re.sub(r"\D", "", str(t))
-
     def extrair_lista_contatos(texto_bruto):
         """Recebe um bloco de texto bruto (pode ter quebras de linha no meio
         dos nomes) e devolve uma lista de nomes limpos, separados por '/'."""
@@ -1316,7 +1283,6 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
             if nome:
                 nomes.append(nome)
         return nomes
-
     def comparar_listas_nomes(lista_a, texto_b_bruto):
         """Confere se cada nome da lista_a aparece no texto_b_bruto. Compara
         com TODOS os espaços removidos dos dois lados (além de acento/caixa)
@@ -1332,10 +1298,8 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
             else:
                 faltando.append(nome)
         return encontrados, faltando
-
     MESES_CONF = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
                   "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12}
-
     def data_para_iso(data_str):
         """Converte '31-AUG-2028' (formato do Packing List) -> '2028-08-31'
         (formato usado na NEWSE). Devolve None se não reconhecer o formato."""
@@ -1347,7 +1311,6 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
         if not mes:
             return None
         return f"{ano}-{mes:02d}-{int(dia):02d}"
-
     def extrair_itens_packing(texto):
         """Extrai cada item de produto da Packing List: Material, Batch
         (Lote), Quantity, Use Date (Validade) e a lista de números de série —
@@ -1376,7 +1339,6 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                 "seriais": seriais,
             })
         return itens
-
     def extrair_seriais_produtos_newse(texto_newse_bruto):
         """Lê a tabela 'Produto(s)' da NEWSE e devolve um dicionário
         serial -> [validades associadas a ele]. A extração de PDF grudona
@@ -1401,7 +1363,6 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
             data_iso = f"{data_compacta[:4]}-{data_compacta[4:6]}-{data_compacta[6:]}"
             mapa_serial_para_validades.setdefault(serial, []).append(data_iso)
         return mapa_serial_para_validades, bloco_normalizado
-
     def linha_conferencia(campo, valor_a, valor_b, ok, obs_ok, obs_divergente):
         """Renderiza uma linha da tabela de conferência (campo, valor de cada
         lado e status) e devolve se ela está OK — sempre mostrando os dois
@@ -1414,40 +1375,33 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
         st.caption(obs_ok if ok else obs_divergente)
         st.markdown("---")
         return ok
-
     tab_conf1, tab_conf2, tab_conf3 = st.tabs([
         "Etapa 1: Packing List x NEWSE",
         "Etapa 2: NEWSE x Agendamento",
         "Etapa 3: Auditoria Final (Minuta)",
     ])
-
     # ---------------------------------------------------------
     # ETAPA 1: PACKING LIST X NEWSE
     # ---------------------------------------------------------
     with tab_conf1:
         st.markdown("#### Etapa 1: Validação de Raiz (Packing List x NEWSE)")
         st.caption("Confronto estruturado campo a campo entre a Packing List e a NEWSE.")
-
         col1, col2 = st.columns(2)
         with col1:
             pedido_file = st.file_uploader("Arraste a Packing List (PDF)", type=["pdf"], key=f"conf_p_etapa1_{st.session_state.conferencia_uploader_key}")
         with col2:
             newse_file_1 = st.file_uploader("Arraste a NEWSE (PDF)", type=["pdf"], key=f"conf_n_etapa1_{st.session_state.conferencia_uploader_key}")
-
         if st.button("Validar Etapa 1", key="conf_btn1"):
             if pedido_file and newse_file_1:
                 t_pedido = extrair_texto_pdf_conferencia(pedido_file)
                 t_newse = extrair_texto_pdf_conferencia(newse_file_1)
-
                 checks_1 = []
-
                 # --- Delivery Number (Packing List) x Número da Ordem (NEWSE) ---
                 m_del_p = re.search(r"Delivery\s*number\s*:?\s*(\d+)", t_pedido, re.IGNORECASE)
                 del_p = m_del_p.group(1).strip() if m_del_p else "NÃO LOCALIZADO"
                 m_del_n = re.search(r"N[uú]mero da ordem\s*:?\s*(\d+)", t_newse, re.IGNORECASE)
                 del_n = m_del_n.group(1).strip() if m_del_n else "NÃO LOCALIZADO"
                 ok_delivery = del_p != "NÃO LOCALIZADO" and del_p == del_n
-
                 # --- Protocolo / Estudo ---
                 m_prot_p = re.search(r"Protocol number\s*:?\s*([A-Z0-9\-\/]+)", t_pedido, re.IGNORECASE)
                 prot_p_raw = m_prot_p.group(1) if m_prot_p else ""
@@ -1456,7 +1410,6 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                 m_prot_n = re.search(r"(CA\d+-\d+)", t_newse.upper())
                 prot_n = m_prot_n.group(1) if m_prot_n else "NÃO LOCALIZADO"
                 ok_protocolo = prot_p != "NÃO LOCALIZADO" and prot_p == prot_n
-
                 # --- CEP de destino ---
                 bloco_shipto_packing = t_pedido.split("Ship To")[-1] if "Ship To" in t_pedido else t_pedido
                 m_cep_p = re.search(r"(\d{5}-?\d{3})", bloco_shipto_packing)
@@ -1464,7 +1417,6 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                 m_cep_n = re.search(r"CEP[^\d]*(\d{5}-?\d{3})", t_newse, re.IGNORECASE)
                 cep_n = m_cep_n.group(1).replace("-", "") if m_cep_n else "NÃO LOCALIZADO"
                 ok_cep = cep_p != "NÃO LOCALIZADO" and cep_p == cep_n
-
                 # --- Investigador: fonte é a NEWSE (campo bem identificado lá),
                 # e depois confere se o nome aparece no texto da Packing List ---
                 m_inv_n = re.search(
@@ -1477,7 +1429,6 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                 ok_investigador = bool(palavras_inv) and all(
                     w in packing_upper_noacc for w in [palavras_inv[0], palavras_inv[-1]]
                 )
-
                 st.markdown("### 📋 Tabela de Conferência Analítica - Etapa 1")
                 checks_1.append(linha_conferencia(
                     "Delivery Number x Número da Ordem", del_p, del_n, ok_delivery,
@@ -1501,7 +1452,6 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                     "Nome do investigador da NEWSE localizado no texto da Packing List.",
                     "Nome do investigador da NEWSE não foi localizado no texto da Packing List.",
                 ))
-
                 # --- Confronto Detalhado: Dispositivos / Produtos ---
                 st.markdown("### 📦 Confronto Detalhado: Dispositivos / Produtos (PACKING x NEWSE)")
                 st.caption(
@@ -1509,32 +1459,26 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                     "Nome/Lote/Quantidade/Validade/Peça ou Série (NEWSE). O mais importante: "
                     "se um número aparece no campo Peça OU no campo Série da NEWSE, já conta como correto."
                 )
-
                 itens_packing = extrair_itens_packing(t_pedido)
                 mapa_serial_newse, bloco_produtos_newse_norm = extrair_seriais_produtos_newse(t_newse)
-
                 if not itens_packing:
                     st.warning("⚠️ Não foi possível identificar os itens de produto na Packing List (formato não reconhecido — verifique manualmente pelos blocos de texto abaixo).")
                     checks_1.append(False)
-
                 seriais_packing_todos = []
                 for item in itens_packing:
                     seriais_packing_todos.extend(item["seriais"])
                     lote_norm = normalizar_alfanum(item["lote"])
                     lote_ok = lote_norm in bloco_produtos_newse_norm
-
                     linhas_serial = []
                     for s in item["seriais"]:
                         datas_encontradas = mapa_serial_newse.get(s, [])
                         encontrado = bool(datas_encontradas)
                         validade_bate = encontrado and item["validade_iso"] in datas_encontradas
                         linhas_serial.append((s, encontrado, validade_bate))
-
                     qtd_ok = item["quantidade"] == len(item["seriais"])
                     seriais_ok = bool(item["seriais"]) and all(v for _, _, v in linhas_serial)
                     item_ok = lote_ok and qtd_ok and seriais_ok
                     checks_1.append(item_ok)
-
                     st.markdown(f"**{item['nome']}**  (Material {item['material']})")
                     col_pk, col_nw = st.columns(2)
                     with col_pk:
@@ -1556,14 +1500,12 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                                 st.text(f"❌ Peça/Série {s} — NÃO encontrada na NEWSE")
                     st.markdown("✅ **Item conforme**" if item_ok else "❌ **Item com divergência**")
                     st.markdown("---")
-
                 a_mais_na_newse = [s for s in mapa_serial_newse.keys() if s not in seriais_packing_todos]
                 if a_mais_na_newse:
                     st.warning(f"⚠️ Seriais a mais na NEWSE, sem produto correspondente na Packing List: {', '.join(a_mais_na_newse)}")
                     checks_1.append(False)
                 elif itens_packing:
                     st.success("✅ Nenhum serial a mais na NEWSE — todos os produtos da NEWSE têm correspondência na Packing List.")
-
                 # Blocos de texto bruto, para conferência visual manual adicional
                 col_d1, col_d2 = st.columns(2)
                 with col_d1:
@@ -1572,7 +1514,6 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                 with col_d2:
                     with st.expander("Ver texto bruto extraído da NEWSE"):
                         st.text(t_newse)
-
                 st.markdown("---")
                 aprovado_1 = all(checks_1)
                 if aprovado_1:
@@ -1581,46 +1522,38 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                     st.error("🚨 **Resultado Final da Etapa 1:** REPROVADO! Divergências encontradas entre os documentos (veja acima quais campos/itens).")
             else:
                 st.warning("Por favor, faça o upload de ambos os arquivos.")
-
     # ---------------------------------------------------------
     # ETAPA 2: NEWSE X AGENDAMENTO
     # ---------------------------------------------------------
     with tab_conf2:
         st.markdown("#### Etapa 2: Validação de Comunicação (NEWSE x Agendamento)")
         st.caption("Confronto estruturado entre a NEWSE e o e-mail de Agendamento (ignorando data e horário de entrega).")
-
         col1, col2 = st.columns(2)
         with col1:
             newse_file_2 = st.file_uploader("Arraste a NEWSE (PDF)", type=["pdf"], key=f"conf_n_etapa2_{st.session_state.conferencia_uploader_key}")
         with col2:
             agenda_file = st.file_uploader("Arraste o E-mail de Agendamento (PDF)", type=["pdf"], key=f"conf_a_etapa2_{st.session_state.conferencia_uploader_key}")
-
         if st.button("Validar Etapa 2", key="conf_btn2"):
             if newse_file_2 and agenda_file:
                 t_newse2 = extrair_texto_pdf_conferencia(newse_file_2)
                 t_agenda = extrair_texto_pdf_conferencia(agenda_file)
-
                 checks_2 = []
-
                 m_prot_n2 = re.search(r"(CA\d+-\d+)", t_newse2.upper())
                 prot_n2 = m_prot_n2.group(1) if m_prot_n2 else "NÃO LOCALIZADO"
                 m_prot_a = re.search(r"(CA\d+-\d+)", t_agenda.upper())
                 prot_a = m_prot_a.group(1) if m_prot_a else "NÃO LOCALIZADO"
                 ok_prot2 = prot_n2 != "NÃO LOCALIZADO" and prot_n2 == prot_a
-
                 bloco_dest_n = t_newse2.split("Dados do Destinatário")[-1] if "Dados do Destinatário" in t_newse2 else t_newse2
                 m_cnpj_n = re.search(r"(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})", bloco_dest_n)
                 cnpj_n = so_digitos(m_cnpj_n.group(1)) if m_cnpj_n else "NÃO LOCALIZADO"
                 m_cnpj_a = re.search(r"CPF\s*/\s*CNPJ\s*:?\s*([\d\.\/\-]+)", t_agenda, re.IGNORECASE)
                 cnpj_a = so_digitos(m_cnpj_a.group(1)) if m_cnpj_a else "NÃO LOCALIZADO"
                 ok_cnpj2 = cnpj_n != "NÃO LOCALIZADO" and cnpj_n == cnpj_a
-
                 m_cep_n2 = re.search(r"CEP[^\d]*(\d{5}-?\d{3})", t_newse2, re.IGNORECASE)
                 cep_n2 = so_digitos(m_cep_n2.group(1)) if m_cep_n2 else "NÃO LOCALIZADO"
                 m_cep_a = re.search(r"CEP\s*:?\s*\n?\s*(\d{5}-?\d{3})", t_agenda, re.IGNORECASE)
                 cep_a = so_digitos(m_cep_a.group(1)) if m_cep_a else "NÃO LOCALIZADO"
                 ok_cep2 = cep_n2 != "NÃO LOCALIZADO" and cep_n2 == cep_a
-
                 m_contatos_n = re.search(
                     r"Pessoa\(s\) Autorizada\(s\)\s*\nNome[^\n]*\n(.+?)Investigador",
                     t_newse2, re.IGNORECASE | re.DOTALL,
@@ -1630,7 +1563,6 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                 contatos_a_texto = m_contatos_a.group(1) if m_contatos_a else ""
                 encontrados_c2, faltando_c2 = comparar_listas_nomes(contatos_n, contatos_a_texto)
                 ok_contatos2 = bool(contatos_n) and not faltando_c2
-
                 st.markdown("### 📋 Tabela de Conferência Analítica - Etapa 2")
                 checks_2.append(linha_conferencia(
                     "Protocolo / Estudo", prot_n2, prot_a, ok_prot2,
@@ -1662,7 +1594,6 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                 c4.markdown("➖ Não avaliado")
                 st.caption("Por regra desta etapa, data e horário de entrega não são conferidos aqui (podem mudar por reagendamento sem indicar problema no envio).")
                 st.markdown("---")
-
                 aprovado_2 = all(checks_2)
                 if aprovado_2:
                     st.success("🎉 **Resultado Final da Etapa 2:** APROVADO! O agendamento confere com a NEWSE.")
@@ -1670,14 +1601,12 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                     st.error("🚨 **Resultado Final da Etapa 2:** REPROVADO! Divergências encontradas entre os documentos (veja acima quais campos).")
             else:
                 st.warning("Por favor, faça o upload de ambos os arquivos.")
-
     # ---------------------------------------------------------
     # ETAPA 3: AUDITORIA FINAL (MINUTA)
     # ---------------------------------------------------------
     with tab_conf3:
         st.markdown("#### Etapa 3: Auditoria Final (Todas as Documentações + Minuta)")
         st.caption("Auditoria cruzada final com a Minuta de Envio (SC) e regras fixas de transporte DRS.")
-
         col1, col2, col3 = st.columns(3)
         with col1:
             f_newse_3 = st.file_uploader("NEWSE", type=["pdf"], key=f"conf_n_etapa3_{st.session_state.conferencia_uploader_key}")
@@ -1685,38 +1614,31 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
             f_agenda_3 = st.file_uploader("Agendamento", type=["pdf"], key=f"conf_a_etapa3_{st.session_state.conferencia_uploader_key}")
         with col3:
             f_minuta_3 = st.file_uploader("Minuta de Envio (SC)", type=["pdf"], key=f"conf_m_etapa3_{st.session_state.conferencia_uploader_key}")
-
         if st.button("Executar Auditoria Final", key="conf_btn3"):
             if f_newse_3 and f_agenda_3 and f_minuta_3:
                 t_newse3 = extrair_texto_pdf_conferencia(f_newse_3)
                 t_minuta = extrair_texto_pdf_conferencia(f_minuta_3)
-
                 checks_3 = []
-
                 cnpjs_drs_validos = ["00804488000100", "00804488000290"]
                 m_remetente = re.search(r"Remetente\s*-\s*([\d\.\/\-\s]+)", t_minuta)
                 remetente_digits = so_digitos(m_remetente.group(1)) if m_remetente else ""
                 ok_remetente = remetente_digits in cnpjs_drs_validos
-
                 m_prot_n3 = re.search(r"(CA\d+-\d+)", t_newse3.upper())
                 prot_n3 = m_prot_n3.group(1) if m_prot_n3 else "NÃO LOCALIZADO"
                 m_prot_m = re.search(r"(CA\d+-\d+)", t_minuta.upper())
                 prot_m = m_prot_m.group(1) if m_prot_m else "NÃO LOCALIZADO"
                 ok_prot3 = prot_n3 != "NÃO LOCALIZADO" and prot_n3 == prot_m
-
                 m_track_n = re.search(r"Tracking Number\s*:?\s*\n?\s*([\d\-]+)", t_newse3, re.IGNORECASE)
                 track_n = m_track_n.group(1) if m_track_n else "NÃO LOCALIZADO"
                 m_track_m = re.search(r"TRACKING NUMBER\s+([\d\-]+)", t_minuta, re.IGNORECASE)
                 track_m = m_track_m.group(1) if m_track_m else "NÃO LOCALIZADO"
                 ok_track = track_n != "NÃO LOCALIZADO" and track_n == track_m
-
                 bloco_dest_n3 = t_newse3.split("Dados do Destinatário")[-1] if "Dados do Destinatário" in t_newse3 else t_newse3
                 m_cnpj_n3 = re.search(r"(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})", bloco_dest_n3)
                 cnpj_n3 = so_digitos(m_cnpj_n3.group(1)) if m_cnpj_n3 else "NÃO LOCALIZADO"
                 m_dest_minuta = re.search(r"Destinat[aá]rio\s*-\s*([\d\s]+)", t_minuta)
                 dest_cnpj_minuta = so_digitos(m_dest_minuta.group(1)) if m_dest_minuta else "NÃO LOCALIZADO"
                 ok_dest_cnpj = dest_cnpj_minuta != "NÃO LOCALIZADO" and dest_cnpj_minuta == cnpj_n3
-
                 m_inv_n3 = re.search(
                     r"Investigador\(es\) Principal\(is\) / M[eé]dico\(s\)\s*\n?Nome\s*\n?([^\n]+)",
                     t_newse3, re.IGNORECASE,
@@ -1728,7 +1650,6 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                 ok_pi3 = bool(palavras_inv3) and all(
                     w in remover_acentos(pi_minuta.upper()) for w in [palavras_inv3[0], palavras_inv3[-1]]
                 )
-
                 m_contatos_n3 = re.search(
                     r"Pessoa\(s\) Autorizada\(s\)\s*\nNome[^\n]*\n(.+?)Investigador",
                     t_newse3, re.IGNORECASE | re.DOTALL,
@@ -1743,10 +1664,8 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                 contatos_m_texto = m_contatos_m.group(1) if m_contatos_m else ""
                 encontrados_c3, faltando_c3 = comparar_listas_nomes(contatos_n3, contatos_m_texto)
                 ok_contatos3 = bool(contatos_n3) and not faltando_c3
-
                 m_transp = re.search(r"DRS\s*(COURIER|ADMINISTRA[CÇ][AÃ]O DE ESTOQUES)", t_minuta, re.IGNORECASE)
                 ok_transp = bool(m_transp)
-
                 # Monta a lista de linhas (sem renderizar ainda) e guarda o
                 # resultado em session_state — em vez de desenhar a tabela
                 # direto aqui dentro do "if st.button(...)". Isso é necessário
@@ -1790,7 +1709,6 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                 st.session_state.conf_etapa3_confirmado = False
             else:
                 st.warning("Por favor, faça o upload de todos os três documentos exigidos.")
-
         # Renderiza o resultado guardado (se houver) — continua na tela mesmo
         # depois de reruns causados pelos botões "OK" e "Liberar Processo".
         resultado_3 = st.session_state.conf_etapa3_resultado
@@ -1798,14 +1716,11 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
             st.markdown("### 📋 Tabela de Conferência Analítica - Etapa 3")
             for linha in resultado_3["linhas"]:
                 linha_conferencia(*linha)
-
             if resultado_3["aprovado"]:
                 st.success("🎉 **Resultado Final da Etapa 3:** TUDO CERTO com a minuta de envio! Processo liberado para o time de Expedição.")
             else:
                 st.error("🚨 **Resultado Final da Etapa 3:** REPROVADO! Divergências encontradas entre os documentos (veja acima quais campos).")
-
             st.markdown("---")
-
             # Confirmação obrigatória antes de liberar o processo — só depois
             # de clicar em "OK" é que aparece o lembrete e o botão para
             # limpar os PDFs das 3 etapas.
@@ -1820,12 +1735,10 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                     st.session_state.conf_etapa3_resultado = None
                     st.session_state.conf_etapa3_confirmado = False
                     st.rerun()
-
 # ==========================================
 # PÁGINA: BMS BRASIL - SOLICITAÇÕES (retirada de TAG sem Packing List)
 # ==========================================
 elif st.session_state.pagina_atual == "bms_brasil":
-
     st.markdown("""
         <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
             <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">🇧🇷 BMS Brasil — Solicitações</h2>
@@ -1837,29 +1750,24 @@ elif st.session_state.pagina_atual == "bms_brasil":
             </p>
         </div>
     """, unsafe_allow_html=True)
-
     arquivo_newse_brasil = st.file_uploader(
         "📥 Arraste o PDF da NEWSE (Solicitação Brasil) aqui",
         type=["pdf"],
         key=f"brasil_{st.session_state.brasil_uploader_key}",
     )
-
     if arquivo_newse_brasil is None:
         # Mesma lógica da página de Automação: sem arquivo anexado, nada foi
         # de fato retirado do estoque ainda, então a navegação não precisa
         # ficar travada — permite cancelar só removendo o arquivo.
         st.session_state.alocacao_pendente = False
-
     if arquivo_newse_brasil is not None:
         leitor_brasil = PdfReader(arquivo_newse_brasil)
         texto_brasil_upper = extrair_texto_pdf(leitor_brasil).upper()
-
         # --- Protocolo do estudo ---
         estudo_brasil = "NÃO IDENTIFICADO"
         match_protocolo_brasil = re.search(r"\bCA\d+-\d+\b", texto_brasil_upper)
         if match_protocolo_brasil:
             estudo_brasil = match_protocolo_brasil.group(0)
-
         # --- TE do estudo: primeiro tenta achar impresso na própria NEWSE;
         # se não achar, cai no mesmo fallback por planilha usado na Automação ---
         te_brasil = "NÃO ENCONTRADO"
@@ -1870,7 +1778,6 @@ elif st.session_state.pagina_atual == "bms_brasil":
             for idx, row in df_te.iterrows():
                 if estudo_brasil != "NÃO IDENTIFICADO" and estudo_brasil in str(row['Estudo']).upper():
                     te_brasil = str(row['TE']).strip(); break
-
         # --- Centro / instituição de destino (apenas para exibição/contexto) ---
         centro_brasil = "NÃO IDENTIFICADO"
         match_centro_brasil = re.search(
@@ -1879,28 +1786,22 @@ elif st.session_state.pagina_atual == "bms_brasil":
         )
         if match_centro_brasil:
             centro_brasil = match_centro_brasil.group(1).strip()
-
         # --- Faixa de temperatura (decide Tag Alert Ambiente x Refrigerado) ---
         tem_ref_brasil, tem_amb_brasil = detectar_faixas_newse(texto_brasil_upper)
-
         st.success("✅ NEWSE processada com sucesso.")
         c1, c2, c3 = st.columns(3)
         with c1: st.markdown(card_metrica("Centro / Instituição", centro_brasil), unsafe_allow_html=True)
         with c2: st.markdown(card_metrica("Protocolo / Estudo", estudo_brasil), unsafe_allow_html=True)
         with c3: st.markdown(card_metrica("TE Correspondente", te_brasil), unsafe_allow_html=True)
         st.write("")
-
         st.markdown("### 🏷️ Retirada de Tag Alert")
-
         if not tem_ref_brasil and not tem_amb_brasil:
             st.warning("⚠️ Não foi possível identificar a faixa de temperatura (Ambiente/Refrigerado) nesta NEWSE. Verifique o documento manualmente.")
-
         # Identidade estável deste upload — evita duplicar a retirada se a
         # página recarregar com o mesmo PDF ainda anexado (mesmo padrão da
         # página de Automação).
         arquivo_id_brasil = getattr(arquivo_newse_brasil, "file_id", None) or f"{arquivo_newse_brasil.name}_{arquivo_newse_brasil.size}"
         registro_existente_brasil = st.session_state.solicitacoes_brasil_registradas.get(arquivo_id_brasil)
-
         if registro_existente_brasil:
             st.session_state.alocacao_pendente = False
             itens_brasil = registro_existente_brasil["itens"]
@@ -1910,10 +1811,8 @@ elif st.session_state.pagina_atual == "bms_brasil":
             st.caption("Para registrar uma nova solicitação, envie um novo arquivo PDF acima.")
         else:
             itens_brasil = []
-
             if df_estoque is not None and not df_estoque.empty:
                 df_estoque_temp_brasil = df_estoque.copy()
-
                 def allocate_logger_brasil(nome_busca, label):
                     filtro = df_estoque_temp_brasil[
                         df_estoque_temp_brasil['Descricao_Clean'].str.contains(nome_busca, na=False)
@@ -1931,7 +1830,6 @@ elif st.session_state.pagina_atual == "bms_brasil":
                         st.info(f"**{label}** alocado ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')} | Série: {serie}")
                     else:
                         st.warning(f"⚠️ **{label}**: Sem saldo disponível no estoque!")
-
                 # Só Tag Alert — solicitações Brasil não usam TempTale (pedido
                 # explícito do usuário: "para solicitações brasil não mandamos
                 # TEMPTALE"). Um Tag Alert por faixa de temperatura detectada.
@@ -1939,9 +1837,7 @@ elif st.session_state.pagina_atual == "bms_brasil":
                     allocate_logger_brasil("TAGALERT 15-25", "Tag Alert Ambiente")
                 if tem_ref_brasil:
                     allocate_logger_brasil("TAGALERT 2-8", "Tag Alert Refrigerado")
-
                 st.session_state.alocacao_pendente = bool(itens_brasil)
-
                 if itens_brasil:
                     st.markdown(
                         "<div class='drs-alerta-pendente'>⚠️ Retirada pendente de confirmação — clique em "
@@ -1955,7 +1851,6 @@ elif st.session_state.pagina_atual == "bms_brasil":
                     )
                 else:
                     components.html("<script>window.parent.onbeforeunload = null;</script>", height=0)
-
                 col_id_brasil, col_btn_brasil = st.columns([2, 1])
                 with col_id_brasil:
                     # Campo travado de propósito — pedido explícito do usuário:
@@ -1970,7 +1865,6 @@ elif st.session_state.pagina_atual == "bms_brasil":
                             "WEBHOOK_BAIXA_ESTOQUE",
                             "https://script.google.com/macros/s/AKfycbzpwZC2LW7PQ1JGMkJIZD3Rxd4nv4pfEZ1QS1D9jDxQbt4Qf2hiCmv9dJ8pAJnBHJglug/exec"
                         )
-
                         payload = {
                             "data_uso": datetime.today().strftime('%d/%m/%Y'),
                             "delivery_number": "Solicitação Brasil",
@@ -1986,7 +1880,6 @@ elif st.session_state.pagina_atual == "bms_brasil":
                                 } for p in itens_brasil
                             ]
                         }
-
                         try:
                             req = urllib.request.Request(
                                 webhook_url,
@@ -1998,23 +1891,19 @@ elif st.session_state.pagina_atual == "bms_brasil":
                                 resposta = json.loads(resposta_bruta)
                             except ValueError:
                                 resposta = {}
-
                             if resposta.get("result") != "success":
                                 raise RuntimeError(
                                     resposta.get("message", f"Resposta inesperada do servidor: {resposta_bruta[:300]}")
                                 )
-
                             for p in itens_brasil:
                                 st.session_state.seriais_consumidos.add(str(p["serie"]).strip())
                                 st.session_state.ids_consumidos.add(str(p["id_est"]).strip())
-
                             st.session_state.solicitacoes_brasil_registradas[arquivo_id_brasil] = {
                                 "itens": itens_brasil,
                                 "data_uso": datetime.today().strftime('%d/%m/%Y %H:%M'),
                             }
                             st.session_state.alocacao_pendente = False
                             st.session_state.brasil_uploader_key += 1
-
                             st.cache_data.clear()
                             itens_txt_brasil = ", ".join([p["label"] for p in itens_brasil])
                             st.success(f"✅ Retirada registrada com sucesso para: {itens_txt_brasil}.")
@@ -2025,11 +1914,224 @@ elif st.session_state.pagina_atual == "bms_brasil":
             else:
                 st.warning("⚠️ Estoque indisponível no momento — não é possível alocar Tag Alert automaticamente.")
 
+        st.markdown("### 📋 Dados para Restrição e Particularidades")
+        val_depositante_brasil = "056998982001260"
+        val_palete_brasil = " | ".join([p["palete"] for p in itens_brasil]) or "N/A"
+        val_id_brasil = " | ".join([p["id_est"] for p in itens_brasil]) or "N/A"
+        val_te_brasil = te_brasil
+
+        def btn_copia_brasil(rotulo, valor, uid):
+            html = f"""<div style="display:flex; justify-content:space-between; align-items: center; padding:6px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; margin-bottom:5px;">
+            <div><span style="color:#475569; font-weight:bold; font-size:11px;">{rotulo}:</span> <span style="font-family:monospace; color:#209b7c; font-size:13px; font-weight:bold; margin-left:5px;">{valor}</span></div>
+            <button onclick="navigator.clipboard.writeText('{valor}'); this.innerText='Copiado!'; setTimeout(()=>this.innerText='Copiar', 2000)" style="background:#209b7c; color:white; border:none; border-radius:3px; cursor:pointer; font-size:11px; padding:4px 10px; font-weight:bold;">Copiar</button></div>"""
+            components.html(html, height=45)
+
+        c_esq_brasil, c_dir_brasil = st.columns(2)
+        with c_esq_brasil: btn_copia_brasil("DEPOSITANTE", val_depositante_brasil, "d"); btn_copia_brasil("PALETE", val_palete_brasil, "p")
+        with c_dir_brasil: btn_copia_brasil("ID ITEM", val_id_brasil, "i"); btn_copia_brasil("TE DO ESTUDO", val_te_brasil, "t")
+
+        # --- Particularidades específicas de solicitações BMS Brasil ---
+        # Dois blocos de texto fixos (pedidos pelo usuário): um para
+        # medicação AMBIENTE e outro para REFRIGERADA — a ordem das frases
+        # é diferente entre os dois modelos, então cada bloco é usado
+        # inteiro (em vez de tentar intercalar frase a frase) quando a
+        # faixa de temperatura correspondente foi detectada na NEWSE. Se a
+        # NEWSE tiver itens nas duas faixas ao mesmo tempo (caso raro), os
+        # dois blocos completos aparecem, um após o outro.
+        paragrafos_brasil = []
+        if tem_amb_brasil:
+            paragrafos_brasil.extend([
+                "O pedido foi gerado pelo cliente BMS.",
+                "Houve envio de medicação AMBIENTE.",
+                "As medicações foram acondicionadas em embalagem apropriada CREDO validada pelo cliente com Tag Alert ambiente conforme solicitado pelo cliente.",
+                "O formulário de requisição dos produtos comerciais, deverá ser enviado para a Instituição de destino.",
+                "No caso de medicações comerciais, as medicações estão devidamente etiquetadas com a etiqueta de venda proibida.",
+                "Consultar tracking de validação:",
+            ])
+        if tem_ref_brasil:
+            paragrafos_brasil.extend([
+                "O pedido foi gerado pelo cliente BMS.",
+                "O formulário de requisição dos produtos comerciais, deverá ser enviado para a Instituição de destino.",
+                "No caso de medicações comerciais, as medicações estão devidamente etiquetadas com a etiqueta de venda proibida.",
+                "Houve envio de medicação REFRIGERADA.",
+                "As medicações foram acondicionadas em embalagem apropriada caixa CREDO com Tag Alert refrigerado conforme solicitado pelo cliente.",
+                "Consultar tracking de validação:",
+            ])
+        if not paragrafos_brasil:
+            paragrafos_brasil = [
+                "Não foi possível identificar automaticamente a faixa de temperatura (Ambiente/Refrigerado) desta NEWSE — preencha as particularidades manualmente."
+            ]
+        texto_final_brasil = "\n\n".join(paragrafos_brasil)
+        components.html(f"""<button onclick="navigator.clipboard.writeText(`{texto_final_brasil}`); this.innerText='📋 Texto Copiado!';" style="background:#e59235; color:white; font-size:13px; font-weight:bold; padding:8px; border:none; border-radius:4px; width:100%; cursor:pointer;">📋 Copiar Particularidades</button>""", height=40)
+# ==========================================
+# PÁGINA: FICHA COMERCIAL - PO PARA TRANSFERÊNCIAS
+# ==========================================
+# A partir do e-mail de proposta comercial (coleta na BMS, entrega em vários
+# centros) o usuário precisa preencher a "Ficha Comercial". Esta página
+# extrai o protocolo e a lista de centros/destinos do e-mail, confirma a
+# cidade de cada centro pelo CEP (ver consultar_cep/extrair_centros_proposta
+# no topo do arquivo — o CEP é a fonte de verdade, não o texto digitado à
+# mão no e-mail, que já veio errado em casos reais) e monta a ficha com os
+# valores fixos do modelo padrão de transferência BMS. CONSULTOR (A) e PESO
+# ficam propositalmente em branco (pedido do usuário), para o outro time
+# preencher quando a ficha for encaminhada por e-mail.
+elif st.session_state.pagina_atual == "ficha_comercial":
+    st.markdown("""
+        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">🚚 Ficha Comercial - PO para Transferências</h2>
+            <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
+                Faça o upload do <b>e-mail da proposta comercial de transferência (PDF)</b> — coleta na BMS, entrega em vários
+                centros. O sistema identifica o protocolo e cada centro de destino, <b>confirma a cidade de cada um pelo CEP</b>
+                (não pelo texto do e-mail, que pode vir errado) e pré-preenche a Ficha Comercial.
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    arquivo_proposta = st.file_uploader(
+        "📥 Arraste o PDF do e-mail da proposta comercial aqui",
+        type=["pdf"],
+        key="ficha_comercial_uploader",
+    )
+
+    if arquivo_proposta is not None:
+        leitor_proposta = PdfReader(arquivo_proposta)
+        texto_proposta = extrair_texto_pdf(leitor_proposta, separador="\n")
+
+        estudo_proposta = "NÃO IDENTIFICADO"
+        m_estudo_proposta = re.search(r"\bCA\d+-\d+\b", texto_proposta.upper())
+        if m_estudo_proposta:
+            estudo_proposta = m_estudo_proposta.group(0)
+
+        centros = extrair_centros_proposta(texto_proposta)
+
+        if not centros:
+            st.warning(
+                "⚠️ Não foi possível identificar nenhum centro (padrão \"Centro NNNN - Nome\") no texto deste e-mail. "
+                "Verifique se o PDF tem texto selecionável (não é uma imagem escaneada) — se for imagem, preencha a "
+                "ficha manualmente."
+            )
+        else:
+            st.success(f"✅ Protocolo **{estudo_proposta}** — {len(centros)} centro(s) de entrega identificado(s).")
+
+            destinos_finais = []
+            divergencias = []
+            ceps_incompletos = []
+            with st.spinner("Consultando o CEP de cada centro..."):
+                for centro in centros:
+                    cep_info = None if centro["cep_incompleto"] else consultar_cep(centro["cep_digits"])
+                    if cep_info and cep_info["cidade"]:
+                        centro["cidade_oficial"] = cep_info["cidade"]
+                        centro["uf_oficial"] = cep_info["uf"]
+                        destino_str = f"{cep_info['cidade']}/{cep_info['uf']}"
+                    else:
+                        # CEP não encontrado/incompleto/não confirmado — usa a
+                        # cidade escrita no e-mail (quando existe) como melhor
+                        # informação disponível, mas sem marcar como validada.
+                        centro["cidade_oficial"] = ""
+                        centro["uf_oficial"] = ""
+                        if centro["cep_incompleto"]:
+                            # Achamos "CEP" no texto, mas não com 8 dígitos —
+                            # é exatamente o tipo de informação de centro
+                            # errada/incompleta que esta ficha existe para
+                            # pegar, então isso conta como divergência a
+                            # revisar, não como "não confirmado" silencioso.
+                            ceps_incompletos.append(centro)
+                            destino_str = (
+                                f"{centro['cidade_declarada']}/{centro['uf_declarada']} "
+                                f"(⚠️ CEP incompleto no e-mail: \"{centro['cep_formatado']}\" — confirme manualmente)"
+                                if centro["cidade_declarada"]
+                                else f"Centro {centro['numero']} — CEP incompleto no e-mail (\"{centro['cep_formatado']}\"), confirme manualmente"
+                            )
+                        else:
+                            destino_str = (
+                                f"{centro['cidade_declarada']}/{centro['uf_declarada']} (CEP não confirmado)"
+                                if centro["cidade_declarada"]
+                                else f"Centro {centro['numero']} — CEP não confirmado, preencher manualmente"
+                            )
+                    destinos_finais.append(destino_str)
+
+                    # Só dá para comparar quando havia uma cidade ESCRITA no
+                    # e-mail e o CEP foi consultado com sucesso.
+                    if centro["cidade_oficial"] and centro["cidade_declarada"]:
+                        declarada_norm = remover_acentos(centro["cidade_declarada"]).upper().strip()
+                        oficial_norm = remover_acentos(centro["cidade_oficial"]).upper().strip()
+                        if (
+                            declarada_norm != oficial_norm
+                            and declarada_norm not in oficial_norm
+                            and oficial_norm not in declarada_norm
+                        ):
+                            divergencias.append(centro)
+
+            st.markdown("### 📍 Centros identificados (cidade confirmada pelo CEP)")
+            for centro in centros:
+                if centro in divergencias:
+                    st.markdown(
+                        f"- ⚠️ **Centro {centro['numero']} — {centro['nome']}**: o e-mail escreveu "
+                        f"**\"{centro['cidade_declarada']}/{centro['uf_declarada']}\"**, mas o CEP "
+                        f"**{centro['cep_formatado']}** é de **{centro['cidade_oficial']}/{centro['uf_oficial']}** "
+                        f"— guarde esta tela como evidência do erro para repassar à monitora."
+                    )
+                elif centro in ceps_incompletos:
+                    st.markdown(
+                        f"- 🚨 **Centro {centro['numero']} — {centro['nome']}**: o CEP no e-mail "
+                        f"(**\"{centro['cep_formatado']}\"**) não tem 8 dígitos — parece incompleto/errado no "
+                        f"e-mail original. Confirme o CEP correto e guarde esta tela como evidência para repassar "
+                        f"à monitora."
+                    )
+                elif centro["cidade_oficial"]:
+                    st.markdown(
+                        f"- ✅ Centro {centro['numero']} — {centro['nome']}: "
+                        f"**{centro['cidade_oficial']}/{centro['uf_oficial']}** (CEP {centro['cep_formatado']})"
+                    )
+                else:
+                    st.markdown(
+                        f"- ⚪ Centro {centro['numero']} — {centro['nome']}: CEP **{centro['cep_formatado']}** "
+                        f"não pôde ser confirmado — confira manualmente."
+                    )
+
+            if divergencias or ceps_incompletos:
+                st.warning(
+                    f"🚨 {len(divergencias)} centro(s) com a cidade escrita no e-mail divergente do CEP e "
+                    f"{len(ceps_incompletos)} centro(s) com CEP incompleto/errado no e-mail — revise acima antes "
+                    "de encaminhar a ficha."
+                )
+
+            st.markdown("### 🧾 Ficha Comercial")
+            st.caption(
+                "CONSULTOR (A) e PESO ficam em branco de propósito, para o outro time preencher ao receber a ficha por "
+                "e-mail. COLETA está fixo como \"BMS - São Paulo\" — ajuste manualmente se a proposta indicar outro "
+                "ponto de coleta."
+            )
+            campos_ficha = [
+                ("DATA", datetime.today().strftime("%d/%m/%Y")),
+                ("CLIENTE", "BMS"),
+                ("FATURAMENTO", "NOTA FISCAL (MINUTA)"),
+                ("ESTUDO", estudo_proposta),
+                ("TIPO DE SERVIÇO", "SPOT"),
+                ("MODAL", "FLY/STD"),
+                ("PESO", ""),
+                ("SLA", "24,48,72"),
+                ("MATERIAL", "TRAZER A INFORMAÇÃO DO CORPO DO E-MAIL"),
+                ("EMBALAGEM", "PELÃO"),
+                ("LOGGER", "NÃO"),
+                ("GELO", "NÃO"),
+                ("CONSULTOR (A)", ""),
+                ("ORIGEM DRS", "NÃO"),
+                ("COLETA", "BMS - São Paulo"),
+                ("DESTINO", ", ".join(destinos_finais)),
+            ]
+            df_ficha = pd.DataFrame(campos_ficha, columns=["Campo", "Valor"])
+            st.dataframe(df_ficha, use_container_width=True, hide_index=True)
+
+            texto_ficha = "\n".join([f"{campo}: {valor}" for campo, valor in campos_ficha])
+            components.html(
+                f"""<button onclick="navigator.clipboard.writeText(`{texto_ficha}`); this.innerText='📋 Ficha Copiada!';" style="background:#e59235; color:white; font-size:13px; font-weight:bold; padding:8px; border:none; border-radius:4px; width:100%; cursor:pointer;">📋 Copiar Ficha Comercial</button>""",
+                height=40,
+            )
 # ==========================================
 # PÁGINA: GERADOR DE E-MAIL (GR)
 # ==========================================
 elif st.session_state.pagina_atual == "email":
-
     st.markdown("""
         <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
             <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">📧 Gerador de E-mail (GR)</h2>
@@ -2038,7 +2140,6 @@ elif st.session_state.pagina_atual == "email":
             </p>
         </div>
     """, unsafe_allow_html=True)
-
     GERADOR_EMAIL_HTML = """<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -2329,7 +2430,6 @@ elif st.session_state.pagina_atual == "email":
       </div>
       <div class="card">
         <div class="card-title">4. Preview do E-mail Gerado</div>
-
         <div class="form-group" style="margin-bottom: 5px;">
           <label>Assunto do E-mail (Subject Line):</label>
           <div class="readonly-box" id="subjectBox">BMS/GR/TO8616/DEL#</div>
@@ -2453,7 +2553,6 @@ elif st.session_state.pagina_atual == "email":
     }
     function copyBody() {
       const container = document.getElementById('emailBodyContainer');
-
       const range = document.createRange();
       range.selectNodeContents(container);
       const selection = window.getSelection();
@@ -2471,5 +2570,4 @@ elif st.session_state.pagina_atual == "email":
 </body>
 </html>
 """
-
     components.html(GERADOR_EMAIL_HTML, height=1450, scrolling=True)
