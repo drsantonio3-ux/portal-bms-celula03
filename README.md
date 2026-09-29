@@ -99,6 +99,19 @@ Isso é opcional — o app funciona normalmente sem esse passo, usando a URL ant
   - Depois que a Etapa 3 mostra o resultado (Aprovado ou Reprovado), é **obrigatório clicar em "✅ OK — Revisei o Resultado da Etapa 3"** antes de continuar.
   - Só depois desse OK aparece o aviso **"Não esqueça de validar a planilha de expedição"** e o botão **"🔓 Liberar Processo"**, que limpa os PDFs das 3 etapas de uma vez (igual ao botão do topo) para começar a próxima conferência.
 
+## O que mudou na oitava atualização (Gerador de E-mail agora lê a Packing List em PDF)
+
+- **Upload de PDF na aba "Gerador de E-mail (GR)"**: agora dá para anexar a Packing List assinada em PDF e o sistema já tenta preencher sozinho o **Delivery Number**, o **Protocol Number**, o **Order Number** e a tabela de itens (Descrição, Lote, Validade e Quantidade), do mesmo jeito que já é feito hoje manualmente.
+  - Como esse PDF costuma ser um documento assinado/digitalizado (não tem texto real "por trás", só uma imagem), a leitura é feita por **OCR** (reconhecimento óptico de caracteres) em vez da extração de texto normal usada nas outras abas.
+  - **Brazilian Invoice e CESV continuam 100% manuais**, como pedido — esses dois números não vêm de lugar nenhum do PDF, então nunca são preenchidos automaticamente.
+  - O **Número GR ("TO8616")** continua fixo, exatamente como já estava.
+  - Todos os campos preenchidos automaticamente **continuam editáveis** — a leitura automática acerta quase sempre os números principais (Delivery/Protocol/Order), mas pode eventualmente errar um dígito na descrição do produto (por exemplo, num PDF escaneado de baixa qualidade). Por isso, sempre confira a tabela de itens antes de clicar em "Gerar Texto do E-mail", igual à recomendação já dada para a aba Conferência de Agendamento.
+  - Testado com duas Packing Lists reais e diferentes (protocolos, itens e quantidades diferentes) — em ambos os casos os três campos principais e todos os itens foram extraídos corretamente.
+  - Tem um botão **"🗑️ Limpar PDF"** para trocar de arquivo ou recomeçar do zero, e um aviso se o PDF anexado não puder ser lido automaticamente (nesse caso, é só preencher os campos na mão, como sempre foi).
+  - **Requer uma atualização extra no Streamlit Cloud, além do `portal_bms.py`**: veja o aviso logo abaixo.
+
+⚠️ **Importante para essa atualização especificamente**: além de subir o `portal_bms.py` e o `requirements.txt` novos, também é preciso subir um arquivo novo chamado **`packages.txt`** (mesma pasta dos outros arquivos do projeto) — ele instala os dois programas de sistema que fazem a leitura do PDF (`tesseract-ocr` e `poppler-utils`). Sem esse arquivo, o app continua funcionando normalmente, mas a leitura automática do PDF não vai funcionar (o app avisa e deixa preencher manualmente).
+
 ## Limitações conhecidas (não corrigidas nesta rodada, por serem mudanças maiores)
 
 - **Uso simultâneo**: se duas pessoas derem baixa em itens de estoque quase ao mesmo tempo, existe uma janela pequena em que ambas podem "ver" o mesmo item como disponível antes da planilha atualizar. Isso ficou um pouco mais seguro nesta atualização (o item só some depois da confirmação), mas a janela de concorrência em si ainda existe.
