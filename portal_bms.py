@@ -9,7 +9,7 @@ import json
 import time
 import os
 import unicodedata
-   from particularidades import renderizar_checklist_particularidades
+import hashlib
 
 try:
     import pytesseract
@@ -26,8 +26,7 @@ MESES_EN_GR = {
 
 
 def _data_en_para_br_gr(data_str):
-    """Converte uma data no formato '30-APR-2029' (inglês, como aparece na
-    Packing List da BMS) para '30/04/2029' (DD/MM/AAAA)."""
+    """Converte '30-APR-2029' para '30/04/2029'."""
     m = re.match(r"(\d{1,2})-([A-Z]{3})-(\d{4})", data_str.upper())
     if not m:
         return data_str
@@ -37,14 +36,9 @@ def _data_en_para_br_gr(data_str):
 
 
 def extrair_dados_packing_para_email(arquivo_pdf):
-    """Lê uma Packing List em PDF (via OCR, já que esses PDFs costumam ser
-    digitalizados/assinados e não têm texto real embutido) e tenta extrair
-    Delivery Number, Protocol Number, Order Number e a lista de itens
-    (Descrição, Lote, Validade, Quantidade).
-
-    Retorna um dicionário sempre com todas as chaves presentes (mesmo que
-    vazias), para que a página nunca quebre — o usuário revisa e corrige
-    manualmente qualquer campo que o OCR não tenha lido corretamente."""
+    """Lê a Packing List via OCR e tenta extrair Delivery, Protocol, Order e
+    os itens (Descrição, Lote, Validade, Quantidade). Sempre devolve todas as
+    chaves, mesmo vazias, para a página nunca quebrar."""
     resultado = {"delivery": "", "protocolo": "", "order": "", "itens": []}
     if not OCR_DISPONIVEL:
         return resultado
@@ -64,8 +58,6 @@ def extrair_dados_packing_para_email(arquivo_pdf):
     m_proto = re.search(r"Protocol\s*number\s*:?\s*([A-Z]{2}\d{3}-\d{4})", texto_completo, re.IGNORECASE)
     m_order = re.search(r"Order\s*number\s*:?\s*(\d{6,9})", texto_completo, re.IGNORECASE)
 
-    # Se a página 1 não trouxer os 3 campos, tenta também a página 2
-    # (o cabeçalho da Packing List da BMS se repete em todas as páginas).
     if not (m_del and m_proto and m_order):
         try:
             imagens2 = convert_from_bytes(pdf_bytes, dpi=300, first_page=2, last_page=2)
@@ -121,28 +113,18 @@ def extrair_dados_packing_para_email(arquivo_pdf):
 
 
 def extrair_texto_pdf(leitor, separador=""):
-    """Extrai o texto de todas as páginas de um PDF.
-    Ignora páginas sem texto extraível (ex: PDFs escaneados/imagem),
-    o que evita que o app quebre com um upload inesperado."""
+    """Extrai o texto de todas as páginas; ignora páginas sem texto."""
     return separador.join([(pagina.extract_text() or "") for pagina in leitor.pages])
 
 
 def remover_acentos(texto):
-    """Remove acentos (ex: 'FUNDAÇÃO' -> 'FUNDACAO') para comparar textos
-    vindos de sistemas diferentes que nem sempre extraem acentuação da
-    mesma forma."""
+    """Remove acentos para comparar textos de sistemas diferentes."""
     return "".join(c for c in unicodedata.normalize("NFD", texto) if unicodedata.category(c) != "Mn")
 
 
 def detectar_faixas_tagalert(texto_upper):
-    """Procura no Packing List cada faixa de temperatura (ex: "TEMP 2-8 C",
-    "TEMP 2-25 C", "TEMP 15-25 C") e verifica se ela está associada a um item
-    com TAGALERT por perto. Classifica pelo limite superior da faixa:
-    até 8°C = Refrigerado, acima disso = Ambiente.
-
-    Isso é mais robusto do que checar por um texto fixo tipo "15-25" ou
-    "2-30C", porque cada Packing List pode escrever a faixa de um jeito
-    diferente (2-25, 20-25, 15-30, com ou sem espaço antes do "C" etc)."""
+    """Procura faixas 'TEMP 2-8 C' etc. associadas a TAGALERT. Limite superior
+    até 8°C = Refrigerado; acima = Ambiente."""
     tem_ref = False
     tem_amb = False
     for m in re.finditer(r"TEMP\s*-?\d+(?:[.,]\d+)?\s*-\s*(\d+(?:[.,]\d+)?)\s*C", texto_upper):
@@ -158,16 +140,11 @@ def detectar_faixas_tagalert(texto_upper):
 
 
 def detectar_faixas_newse(texto_upper):
-    """Igual à detectar_faixas_tagalert, mas para o texto da NEWSE (solicitação),
-    que escreve a faixa de temperatura em português — "2 A 8ºC", "15 A 25ºC" —
-    em vez do formato "TEMP 2-8 C" do Packing List em inglês. Não depende de
-    nenhuma palavra tipo "TAGALERT" por perto, porque a NEWSE não indica o
-    dispositivo — só a faixa de temperatura de cada item."""
+    """Igual à anterior, mas para a NEWSE ('2 A 8ºC', '15 A 25ºC'). Não depende
+    de 'TAGALERT' por perto. Sem \\b depois do 'C' porque a Quantidade às vezes
+    vem colada na temperatura (ex: '2 A 8ºC12')."""
     tem_ref = False
     tem_amb = False
-    # Sem \b depois do "C": na NEWSE, a Quantidade às vezes vem colada direto
-    # depois da temperatura sem espaço (ex: "2 A 8ºC12"), e exigir um limite
-    # de palavra ali fazia a expressão nunca casar nesse formato.
     for m in re.finditer(r"(\d+(?:[.,]\d+)?)\s*A\s*(\d+(?:[.,]\d+)?)\s*[°º]?C", texto_upper):
         limite_superior = float(m.group(2).replace(",", "."))
         if limite_superior <= 8:
@@ -177,36 +154,21 @@ def detectar_faixas_newse(texto_upper):
     return tem_ref, tem_amb
 
 
-# --- Reconhecimento de medicações citotóxicas (para agrupamento de loggers) ---
-# Usada para decidir, ITEM A ITEM, se ele precisa de caixa/logger separado.
-# Tem lookahead negativo em PACLITAXEL para não confundir com PACLITAXEL NAB
-# / PACLITAXELNAB (nab-paclitaxel/Abraxane): em Packing Lists reais, quando
-# o item de nab-paclitaxel não vem com a palavra "Cytotoxic" no próprio
-# campo de Storage, ele não teve que dividir caixa/logger com os demais
-# itens citotóxicos (validado com documento real — teria feito o sistema
-# voltar a contar errado a quantidade de TempTale). Isso é independente de
-# precisar ou não da ficha de segurança — ver FICHAS_SEGURANCA mais abaixo,
-# que trata PACLITAXEL NAB como precisando da mesma ficha do Paclitaxel.
+# --- Reconhecimento de medicações citotóxicas (agrupamento de loggers) ---
+# Lookahead negativo em PACLITAXEL para não confundir com PACLITAXEL NAB
+# (validado com documento real). A ficha de segurança é tratada à parte
+# em FICHAS_SEGURANCA.
 CITOTOXICOS_REGEX = re.compile(r"BORTEZOMIB|SPRYCEL|DASATINIB|PACLITAXEL(?!\s*NAB)|TAXOL|CYCLOPHOSPHAMIDE|CICLOFOSFAMIDA")
-# Além da lista de nomes conhecidos acima, muitas Packing Lists já trazem a
-# palavra "Cytotoxic" (ou "Citotóxico") escrita no próprio campo de Storage
-# do item — inclusive para medicações que não estão na nossa lista de nomes
-# (ex: Cisplatin, Pemetrexed, Carboplatin). Esse sinal do próprio documento
-# é o mais confiável para decidir "esse item específico precisa de caixa
-# separada", então ele é combinado com a lista de nomes.
+# Muitas Packing Lists já trazem a palavra "Cytotoxic" no campo de Storage
+# (inclusive para Cisplatin, Pemetrexed, Carboplatin etc.).
 CITOTOXICO_TEXTO_REGEX = re.compile(r"CYTOTOXIC|CITOT[ÓO]XIC")
 
-# Linha "Material  Batch   Quantidade EA  Data" que aparece uma vez para
-# cada item de uma Packing List (ex: "8 EA 30-JUN-2027"). É o ponto mais
-# estável do layout para dividir o texto em blocos, um por item.
+# Linha "Quantidade EA Data" que aparece uma vez por item (ex: "8 EA 30-JUN-2027").
 ITEM_ANCHOR_REGEX = re.compile(r"\d+\s*EA\s+\d{1,2}-[A-Z]{3}-\d{4}")
 
 
 def normalizar_faixa_temperatura(bloco_upper):
-    """Extrai e normaliza a faixa/limite de temperatura de UM item (bloco de
-    texto entre o início desse item e o início do próximo), para poder
-    comparar se dois itens compartilham a mesma faixa (e por isso podem
-    dividir a mesma caixa/logger)."""
+    """Extrai e normaliza a faixa/limite de temperatura de UM item."""
     m = re.search(r"TEMP\s+NOT\s+EXCEED\s+(\d+(?:[.,]\d+)?)\s*C", bloco_upper)
     if m:
         return f"NE{m.group(1).replace(',', '.')}"
@@ -220,8 +182,7 @@ def normalizar_faixa_temperatura(bloco_upper):
 
 def faixa_e_refrigerada(faixa_normalizada):
     """True = refrigerado (limite superior <= 8°C), False = ambiente,
-    None = não foi possível determinar (tratado como ambiente por segurança
-    operacional, já que é a faixa mais comum)."""
+    None = indeterminado (tratado como ambiente)."""
     try:
         if faixa_normalizada.startswith("NE"):
             return float(faixa_normalizada[2:]) <= 8
@@ -237,16 +198,8 @@ def item_e_citotoxico(bloco_upper):
 
 
 def analisar_itens_packing(texto_upper):
-    """Divide o texto do Packing List em blocos por item (usando a linha
-    Material/Batch/Quantidade/Data como âncora) e extrai, para cada item,
-    qual dispositivo ele precisa (TempTale ou Tag Alert), se é uma
-    medicação citotóxica e a faixa de temperatura normalizada.
-
-    Isso substitui a lógica antiga, que só enxergava "o documento inteiro
-    tem a palavra X" e por isso nunca conseguia contar corretamente quantos
-    loggers eram realmente necessários quando havia vários itens com faixas
-    de temperatura diferentes, ou vários itens citotóxicos que precisam
-    cada um da sua própria caixa separada."""
+    """Divide a Packing List em blocos por item e extrai, para cada um, o
+    dispositivo (TempTale ou Tag Alert), se é citotóxico e a faixa de temperatura."""
     posicoes = list(ITEM_ANCHOR_REGEX.finditer(texto_upper))
     itens = []
     for i, m in enumerate(posicoes):
@@ -259,7 +212,7 @@ def analisar_itens_packing(texto_upper):
         elif "TAGALERT" in bloco or "TAG ALERT" in bloco:
             dispositivo = "TAGALERT"
         if dispositivo is None:
-            continue  # item sem exigência de logger (ex: linha de confirmação)
+            continue
 
         itens.append({
             "dispositivo": dispositivo,
@@ -270,18 +223,12 @@ def analisar_itens_packing(texto_upper):
 
 
 def agrupar_loggers_necessarios(itens):
-    """A partir da lista de itens (ver analisar_itens_packing), decide quantos
-    loggers de cada tipo são realmente necessários:
-
-    - Itens do MESMO dispositivo, com a MESMA faixa de temperatura e o MESMO
-      status de citotóxico podem compartilhar uma caixa e, portanto, 1 logger.
-    - Itens citotóxicos NUNCA dividem caixa/logger com itens não citotóxicos
-      (regra de caixa separada), mesmo que a faixa de temperatura seja igual.
-
-    Retorna (qtd_temptale, qtd_tagalert_ambiente, qtd_tagalert_refrigerado,
-    tem_algum_citotoxico)."""
+    """Decide quantos loggers de cada tipo são necessários: itens do mesmo
+    dispositivo, mesma faixa e mesmo status de citotóxico dividem 1 logger;
+    citotóxicos nunca dividem caixa com não citotóxicos.
+    Retorna (qtd_temptale, qtd_tagalert_amb, qtd_tagalert_ref, tem_citotoxico)."""
     grupos_temptale = set()
-    grupos_tagalert = set()  # chave: (citotoxico, "AMB"/"REF")
+    grupos_tagalert = set()
     tem_citotoxico = False
 
     for item in itens:
@@ -299,17 +246,335 @@ def agrupar_loggers_necessarios(itens):
     return len(grupos_temptale), qtd_tagalert_amb, qtd_tagalert_ref, tem_citotoxico
 
 
-# --- Fichas de segurança obrigatórias para medicações citotóxicas ---
-# Cada entrada: (regex de reconhecimento, caminho do PDF, rótulo amigável).
-# Só existe ficha própria para essas 4 medicações — outras que o documento
-# marque como "Cytotoxic" (ex: Cisplatin, Carboplatin) entram na regra de
-# caixa separada/logger, mas não têm ficha própria cadastrada aqui.
+# --- Fichas de segurança obrigatórias (só existem para estas 4 medicações) ---
 FICHAS_SEGURANCA = [
     (re.compile(r"BORTEZOMIB"), "fichas_seguranca/ficha_bortezomib.pdf", "Bortezomib (Velcade)"),
     (re.compile(r"SPRYCEL|DASATINIB"), "fichas_seguranca/ficha_sprycel_dasatinib.pdf", "Sprycel / Dasatinib"),
     (re.compile(r"PACLITAXEL|TAXOL"), "fichas_seguranca/ficha_taxol_paclitaxel.pdf", "Taxol / Paclitaxel"),
     (re.compile(r"CYCLOPHOSPHAMIDE|CICLOFOSFAMIDA"), "fichas_seguranca/ficha_ciclofosfamida.pdf", "Cyclophosphamide / Ciclofosfamida"),
 ]
+
+
+# ==========================================================================
+# CHECKLIST DE PARTICULARIDADES (NOVO PADRÃO DRS)
+# ==========================================================================
+# Linhas "fixas" (Observações CS e Anexos) ficam neste JSON, ao lado do
+# portal_bms.py (no Streamlit Cloud pode zerar se o app reiniciar).
+ARQUIVO_FIXAS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "particularidades_fixas.json")
+
+# Centros em que ORDENS COMPLEMENTARES = SIM (independente do TE)
+PALAVRAS_ORDEM_COMPLEMENTAR = ("CAMARGO", "ICESP", "PRUDENTE", "INSTITUTO DO CANCER")
+
+TITULO_MODELO = "MODELO DE PARTICULARIDADES – PADRÃO"
+
+OBS_CS_PACKING = [
+    "A SC deve ser emitida em nome da instituição;",
+    "A minuta deverá ser emitida no CNPJ do centro;",
+]
+
+ANEXOS_PACKING = ["Minutas", "Formulário de Remessa", "Packing list"]
+ANEXO_FICHA = "Ficha de segurança de produtos perigosos"
+
+OBS_WHS_CITOTOXICO = [
+    "Identificar o volume com a etiqueta UN3481 – para envio de equipamentos.",
+    "Etiquetar os volumes com etiqueta excepted quantities.",
+]
+
+OPCAO_VALIDADE_NAO = "NÃO"
+OPCAO_VALIDADE_SIM = "SIM – OBRIGATÓRIO AUTORIZAÇÃO DO CLIENTE ANEXA"
+
+# st.fragment (Streamlit >= 1.37): só o checklist recarrega a cada clique.
+_fragment = (
+    getattr(st, "fragment", None)
+    or getattr(st, "experimental_fragment", None)
+    or (lambda f: f)
+)
+
+
+def centro_exige_ordem_complementar(texto_upper):
+    """True se o destino (bloco 'SHIP TO') é AC Camargo / ICESP / Antônio Prudente."""
+    texto = remover_acentos(texto_upper)
+    bloco = texto.split("SHIP TO")[-1] if "SHIP TO" in texto else texto
+    return any(p in bloco for p in PALAVRAS_ORDEM_COMPLEMENTAR)
+
+
+def montar_texto_embalagem(qtd_temptale, qtd_tag_amb, qtd_tag_ref):
+    """Texto do campo '( X ) OUTRO:' das EMBALAGENS, pela quantidade de loggers
+    que a Packing List pede. Um CREDO por logger (citotóxicos já entram como
+    logger/caixa extra na contagem)."""
+
+    def fmt(qtd, rotulo):
+        return rotulo if qtd == 1 else f"{qtd}x {rotulo}"
+
+    credos, loggers = [], []
+
+    credo_ambiente = qtd_tag_amb + qtd_temptale
+    if credo_ambiente:
+        credos.append(fmt(credo_ambiente, "CREDO AMBIENTE"))
+    if qtd_tag_ref:
+        credos.append(fmt(qtd_tag_ref, "CREDO REFRIGERADO"))
+
+    if qtd_tag_amb:
+        loggers.append(fmt(qtd_tag_amb, "TAG ALERT AMBIENTE"))
+    if qtd_tag_ref:
+        loggers.append(fmt(qtd_tag_ref, "TAG ALERT REFRIGERADO"))
+    if qtd_temptale:
+        loggers.append(fmt(qtd_temptale, "TEMPTALE AMBIENTE"))
+
+    if not credos:
+        return ""
+    return " E ".join(credos) + " + " + " E ".join(loggers)
+
+
+def carregar_linhas_fixas():
+    if "linhas_fixas" in st.session_state:
+        return st.session_state["linhas_fixas"]
+    dados = {secao: [] for secao in ("obs_cs", "anexos")}
+    try:
+        with open(ARQUIVO_FIXAS, "r", encoding="utf-8") as f:
+            lido = json.load(f)
+        for secao in dados:
+            dados[secao] = [str(x).strip() for x in lido.get(secao, []) if str(x).strip()]
+    except Exception:
+        pass
+    st.session_state["linhas_fixas"] = dados
+    return dados
+
+
+def salvar_linhas_fixas():
+    try:
+        with open(ARQUIVO_FIXAS, "w", encoding="utf-8") as f:
+            json.dump(st.session_state["linhas_fixas"], f, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+def _hash_texto(texto):
+    return hashlib.md5(texto.encode("utf-8")).hexdigest()[:8]
+
+
+def _unicos(linhas):
+    vistos, saida = set(), []
+    for linha in linhas:
+        if linha not in vistos:
+            vistos.add(linha)
+            saida.append(linha)
+    return saida
+
+
+def _bloco_linhas_extras(secao, arquivo_id, rotulo_campo):
+    """Mostra as linhas fixas (marcadas por padrão), as extras desta Packing
+    List e o campo para adicionar nova linha (com opção de fixar).
+    Devolve a lista de linhas marcadas."""
+    fixas = carregar_linhas_fixas()[secao]
+    chave_extras = f"part_extras_{secao}_{arquivo_id}"
+    chave_cont = f"part_cont_{secao}_{arquivo_id}"
+    st.session_state.setdefault(chave_extras, [])
+    st.session_state.setdefault(chave_cont, 0)
+
+    selecionadas = []
+
+    for texto in list(fixas):
+        c1, c2 = st.columns([12, 1])
+        with c1:
+            if st.checkbox(f"📌 {texto}", value=True, key=f"part_fixa_{secao}_{_hash_texto(texto)}_{arquivo_id}"):
+                selecionadas.append(texto)
+        with c2:
+            if st.button("🗑️", key=f"part_fixa_del_{secao}_{_hash_texto(texto)}_{arquivo_id}",
+                         help="Remover das linhas fixas"):
+                fixas.remove(texto)
+                salvar_linhas_fixas()
+                st.rerun()
+
+    for texto in st.session_state[chave_extras]:
+        if st.checkbox(texto, value=True, key=f"part_extra_{secao}_{_hash_texto(texto)}_{arquivo_id}"):
+            selecionadas.append(texto)
+
+    cont = st.session_state[chave_cont]
+    novo = st.text_input(
+        rotulo_campo,
+        key=f"part_novo_{secao}_{cont}_{arquivo_id}",
+        placeholder="Digite uma informação adicional (opcional)",
+    )
+    fixar = st.checkbox(
+        "📌 Deixar esta linha como fixa (aparece em todas as próximas Packing Lists)",
+        key=f"part_fixar_{secao}_{cont}_{arquivo_id}",
+    )
+    if st.button("➕ Adicionar linha", key=f"part_add_{secao}_{arquivo_id}"):
+        texto_novo = (novo or "").strip()
+        if texto_novo:
+            if fixar:
+                if texto_novo not in fixas:
+                    fixas.append(texto_novo)
+                    if not salvar_linhas_fixas():
+                        st.warning("Não consegui gravar a linha fixa em arquivo — ela vale só nesta sessão.")
+            elif texto_novo not in st.session_state[chave_extras]:
+                st.session_state[chave_extras].append(texto_novo)
+            st.session_state[chave_cont] = cont + 1  # limpa o campo
+            st.rerun()
+
+    return selecionadas
+
+
+@_fragment
+def _checklist_particularidades(texto_upper, arquivo_id, qtd_temptale, qtd_tag_amb, qtd_tag_ref,
+                                tem_citotoxico_amplo):
+
+    def k(nome):
+        return f"part_{nome}_{arquivo_id}"
+
+    # CYTOTOXIC (para as particularidades) = só as medicações com ficha de segurança
+    citotoxicas = [rotulo for regex, _, rotulo in FICHAS_SEGURANCA if regex.search(texto_upper)]
+    eh_cito = bool(citotoxicas)
+
+    if eh_cito:
+        st.info("🧪 Medicação CYTOTOXIC identificada: " + ", ".join(citotoxicas))
+    elif tem_citotoxico_amplo:
+        st.caption(
+            "ℹ️ A Packing List traz item marcado como Cytotoxic que não está na lista das "
+            "medicações com ficha de segurança — não marquei como CYTOTOXIC. Ajuste abaixo se precisar."
+        )
+
+    # ---------------- CS ----------------
+    st.markdown("#### CS")
+    st.markdown("**ORDENS COMPLEMENTARES**")
+    exige_oc = centro_exige_ordem_complementar(texto_upper)
+    if exige_oc:
+        st.caption("Centro AC Camargo / ICESP / Antônio Prudente → SIM (independente do TE).")
+    escolha_oc = st.radio(
+        "Ordens complementares", ["SIM", "NÃO", "N/A"],
+        index=0 if exige_oc else 1, horizontal=True,
+        key=k("oc"), label_visibility="collapsed",
+    )
+    tn_oc = ""
+    if escolha_oc == "SIM":
+        tn_oc = st.text_input("TN:", key=k("oc_tn"), placeholder="Preencha o número do TN").strip()
+        if not tn_oc:
+            st.warning("⚠️ TN em branco.")
+
+    st.markdown("**OBSERVAÇÕES CS**")
+    st.caption("Incluídas automaticamente (via Packing List):")
+    for linha in OBS_CS_PACKING:
+        st.markdown(f"- {linha}")
+    obs_cs_extras = _bloco_linhas_extras("obs_cs", arquivo_id, "Nova observação CS:")
+
+    # ---------------- OPERAÇÃO WHS ----------------
+    st.markdown("#### OPERAÇÃO WHS")
+    st.markdown("**EMBALAGENS**")
+    sugerido = montar_texto_embalagem(qtd_temptale, qtd_tag_amb, qtd_tag_ref)
+    if not sugerido:
+        st.warning("⚠️ Não identifiquei TAG ALERT / TEMPTALE nesta Packing List — preencha o texto manualmente.")
+    st.caption("Packing List → sempre ( X ) OUTRO. Texto calculado pela quantidade de TAG ALERT / TEMPTALE (pode editar):")
+    texto_embalagem = st.text_input("OUTRO:", value=sugerido, key=k("emb")).strip()
+
+    st.markdown("**ETIQUETAGEM**")
+    st.caption("( X ) N/A — fixo para Packing List")
+
+    st.markdown("**ENVIO DE EQUIPAMENTOS**")
+    st.caption("( X ) N/A — fixo para Packing List")
+
+    st.markdown("**ENVIO DE PRODUTOS PERIGOSOS**")
+    perigoso = st.radio(
+        "Produtos perigosos", ["SIM", "N/A"],
+        index=0 if eh_cito else 1, horizontal=True,
+        key=k("per"), label_visibility="collapsed",
+    )
+    ficha_perigoso = False
+    if perigoso == "SIM":
+        ficha_perigoso = st.checkbox("FICHA DE SEGURANÇA", value=True, key=k("per_ficha"))
+
+    st.markdown("**ESTÁ AUTORIZADO O ENVIO DE PRODUTOS COM VALIDADE INFERIOR A 3 MESES?**")
+    validade = st.radio(
+        "Validade inferior a 3 meses", [OPCAO_VALIDADE_NAO, OPCAO_VALIDADE_SIM],
+        index=None, key=k("val"), label_visibility="collapsed",
+    )
+    if validade is None:
+        st.warning("⚠️ Marque NÃO ou SIM.")
+
+    st.markdown("**ANEXOS OBRIGATÓRIOS NO ENVIO**")
+    anexos = []
+    for rotulo in ANEXOS_PACKING:
+        if st.checkbox(rotulo, value=True, key=k(f"anx_{_hash_texto(rotulo)}")):
+            anexos.append(rotulo)
+    if st.checkbox(ANEXO_FICHA, value=eh_cito, key=k("anx_ficha")):
+        anexos.append(ANEXO_FICHA)
+    anexos_extras = _bloco_linhas_extras("anexos", arquivo_id, "Novo anexo obrigatório:")
+
+    st.markdown("**OBSERVAÇÕES WHS**")
+    obs_whs = []
+    for texto in OBS_WHS_CITOTOXICO:
+        if st.checkbox(texto, value=eh_cito, key=k(f"whs_{_hash_texto(texto)}")):
+            obs_whs.append(texto)
+
+    st.markdown("**FISCAL**")
+    st.caption("Sem particularidades fiscais.")
+
+    # ---------------- Documento final ----------------
+    linhas = [TITULO_MODELO, "", "CS:", "", "- ORDENS COMPLEMENTARES:"]
+    if escolha_oc == "SIM":
+        linhas.append(f"( X ) SIM - TN: {tn_oc}".rstrip())
+    else:
+        linhas.append(f"( X ) {escolha_oc}")
+
+    linhas += ["", "OBSERVAÇÕES CS:"]
+    linhas += _unicos(OBS_CS_PACKING + obs_cs_extras)
+
+    linhas += ["", "OPERAÇÃO WHS:", "", "- EMBALAGENS:"]
+    linhas.append(f"( X ) OUTRO: {texto_embalagem}".rstrip())
+
+    linhas += ["", "- ETIQUETAGEM:", "( X ) N/A"]
+    linhas += ["", "- ENVIO DE EQUIPAMENTOS:", "( X ) N/A"]
+
+    linhas += ["", "- ENVIO DE PRODUTOS PERIGOSOS:"]
+    if perigoso == "SIM":
+        linhas.append("( X ) SIM - ( X ) FICHA DE SEGURANÇA" if ficha_perigoso else "( X ) SIM")
+    else:
+        linhas.append("( X ) N/A")
+
+    linhas += ["", "- ESTÁ AUTORIZADO O ENVIO DE PRODUTOS COM VALIDADE INFERIOR A 3 MESES?"]
+    if validade is None:
+        linhas += [f"( ) {OPCAO_VALIDADE_NAO}", f"( ) {OPCAO_VALIDADE_SIM}"]
+    else:
+        linhas.append(f"( X ) {validade}")
+
+    linhas += ["", "- ANEXOS OBRIGATÓRIOS NO ENVIO:"]
+    linhas += [f"( X ) {a}" for a in _unicos(anexos + anexos_extras)]
+
+    linhas += ["", "OBSERVAÇÕES WHS:"]
+    linhas += obs_whs
+
+    linhas += ["", "- FISCAL:"]
+
+    texto_final = "\n".join(linhas)
+
+    st.markdown("#### 📄 Particularidades geradas")
+    st.code(texto_final, language="text")
+
+    texto_js = json.dumps(texto_final, ensure_ascii=False).replace("</", "<\\/")
+    components.html(
+        f"""
+        <button id="copiar" style="background:#e59235; color:white; font-size:13px; font-weight:bold;
+            padding:8px; border:none; border-radius:4px; width:100%; cursor:pointer;">
+            📋 Copiar Particularidades
+        </button>
+        <script>
+          const texto = {texto_js};
+          const botao = document.getElementById('copiar');
+          botao.addEventListener('click', () => {{
+            navigator.clipboard.writeText(texto);
+            botao.innerText = '📋 Texto Copiado!';
+          }});
+        </script>
+        """,
+        height=45,
+    )
+
+
+def renderizar_checklist_particularidades(texto_upper, arquivo_id, qtd_temptale,
+                                          qtd_tagalert_amb, qtd_tagalert_ref, tem_citotoxico):
+    _checklist_particularidades(texto_upper, arquivo_id, qtd_temptale,
+                                qtd_tagalert_amb, qtd_tagalert_ref, tem_citotoxico)
 
 
 # --- CONFIGURAÇÕES DA PÁGINA (SaaS Logístico - Wide) ---
@@ -453,15 +718,10 @@ if not SENHA_ACESSO:
 
 
 def tela_login(mostrar_erro):
-    """Renderiza a tela de login (fundo em degradê DRS + cartão central com
-    logo, título e o campo de senha). Tudo fica DENTRO de um único
-    st.container(), para o cartão realmente envolver o campo de senha no
-    HTML final (dividir isso em vários st.markdown soltos não funciona no
-    Streamlit — cada st.markdown é um fragmento de HTML independente, uma
-    tag aberta ali não continua "aberta" no próximo elemento)."""
+    """Tela de login (fundo em degradê DRS + cartão central). Tudo dentro de um
+    único st.container() para o cartão envolver o campo de senha."""
     st.markdown("""
         <style>
-        /* Fundo cheio em degradê verde DRS, só nesta tela (login) */
         .stApp { background: linear-gradient(160deg, #10281f 0%, #1b3834 45%, #12302c 100%) !important; }
         [data-testid="stSidebar"] { display: none !important; }
         header[data-testid="stHeader"] { background: rgba(0,0,0,0) !important; }
@@ -566,9 +826,7 @@ def carregar_dados_sheets():
     id_loggers = st.secrets.get("ID_PLANILHA_LOGGERS", "1ztZC3s0kKINJLNOR-BEYUUFjycxSVT7NMGVNWdxWh98")
 
     cb = int(time.time())
-    # gid fixo (aba "ESTOQUE" confirmada com o usuário) em vez de depender de
-    # qual aba está posicionada primeiro na planilha — evita que a leitura
-    # "pule" para outra aba se alguém reordenar ou criar uma aba nova antes dela.
+    # gid fixo (aba "ESTOQUE") para não depender da ordem das abas.
     url_estoque = f"https://docs.google.com/spreadsheets/d/{id_estoque}/export?format=csv&gid={gid_estoque}&cb={cb}"
     url_tes = f"https://docs.google.com/spreadsheets/d/{id_loggers}/export?format=csv&gid=536812026&cb={cb}"
 
@@ -587,8 +845,7 @@ def carregar_dados_sheets():
             if col_id_est and st.session_state.ids_consumidos:
                 df_est = df_est[~df_est[col_id_est].astype(str).str.strip().isin(st.session_state.ids_consumidos)]
         except Exception:
-            # Nome de coluna mudou na planilha (ex: "Descricao" -> "Descrição"):
-            # evita derrubar o app inteiro para todo mundo, só desativa o estoque.
+            # Nome de coluna mudou na planilha: só desativa o estoque, sem derrubar o app.
             df_est = None
 
     try:
@@ -710,11 +967,8 @@ if st.session_state.pagina_atual == "automacao":
     with col_data: data_recebimento = st.date_input("Data de Recebimento", datetime.today())
 
     if arquivo_pdf is None:
-        # Sem PDF anexado nesta tela: nada foi de fato retirado do estoque
-        # (isso só acontece depois que "Executar Baixa" confirma sucesso), então
-        # não há motivo para manter a navegação travada. Isso permite cancelar
-        # uma alocação pendente simplesmente removendo o arquivo (clicando no
-        # "x" do upload), em vez de ficar preso até preencher um DEL#.
+        # Sem PDF: nada foi retirado do estoque, então a navegação não precisa
+        # ficar travada (permite cancelar removendo o arquivo).
         st.session_state.alocacao_pendente = False
 
     if arquivo_pdf is not None:
@@ -736,20 +990,12 @@ if st.session_state.pagina_atual == "automacao":
                     te_resultado = str(row['TE']).strip(); break
 
         # --- Análise por item (quantos loggers de cada tipo são realmente necessários) ---
-        # Divide a Packing List em blocos, um por item, e agrupa por (dispositivo,
-        # citotóxico, faixa de temperatura) — ver analisar_itens_packing/
-        # agrupar_loggers_necessarios no topo do arquivo. Isso substitui a lógica
-        # antiga que só olhava "o documento tem essa palavra em algum lugar" e por
-        # isso não conseguia contar corretamente quantos loggers eram necessários
-        # quando havia mais de um item com faixas de temperatura diferentes.
         itens_detectados = analisar_itens_packing(texto_upper)
 
         if itens_detectados:
             qtd_temptale, qtd_tagalert_amb, qtd_tagalert_ref, tem_citotoxico = agrupar_loggers_necessarios(itens_detectados)
         else:
-            # Formato de documento não reconhecido pelo separador de itens —
-            # usa o modelo antigo (menos preciso, mas já validado) como rede
-            # de segurança em vez de não alocar nenhum logger.
+            # Formato não reconhecido: usa o modelo antigo como rede de segurança.
             tem_temptale_doc = "TEMPTALE" in texto_upper or "TT4" in texto_upper
             tem_tagalert_ref_doc, tem_tagalert_amb_doc = detectar_faixas_tagalert(texto_upper)
             if "TAGALERT" in texto_upper and not tem_tagalert_ref_doc and not tem_tagalert_amb_doc:
@@ -783,9 +1029,8 @@ if st.session_state.pagina_atual == "automacao":
 
         st.markdown("### 📦 Separação e Baixa de Estoque")
 
-        # Identidade estável deste upload — usada para lembrar se a baixa
-        # já foi registrada para ESTE arquivo específico (evita duplicar
-        # a alocação/baixa se a página recarregar com o mesmo PDF ainda anexado).
+        # Identidade estável deste upload (evita duplicar a baixa se a página
+        # recarregar com o mesmo PDF ainda anexado).
         arquivo_id = getattr(arquivo_pdf, "file_id", None) or f"{arquivo_pdf.name}_{arquivo_pdf.size}"
         registro_existente = st.session_state.baixas_registradas.get(arquivo_id)
 
@@ -823,12 +1068,8 @@ if st.session_state.pagina_atual == "automacao":
                     else:
                         st.warning(f"⚠️ **{label}**: Sem saldo disponível no estoque!")
 
-                # Aloca exatamente a quantidade de cada logger que os itens desta
-                # Packing List realmente precisam (ver análise por item acima) —
-                # itens citotóxicos com faixa/dispositivo diferentes dos demais já
-                # entram como grupos separados, então não é somado nenhum "extra"
-                # à parte: o próprio agrupamento já reflete a regra de caixa
-                # separada para citotóxicos.
+                # Aloca exatamente a quantidade de cada logger que os itens realmente
+                # precisam (citotóxicos já entram como grupos separados).
                 for i in range(qtd_temptale):
                     rotulo = "TempTale Ambiente" if qtd_temptale == 1 else f"TempTale Ambiente ({i + 1}/{qtd_temptale})"
                     allocate_logger("TEMPTALE", rotulo)
@@ -874,8 +1115,7 @@ if st.session_state.pagina_atual == "automacao":
                             else:
                                 st.warning(f"⚠️ Ficha de {rotulo_ficha} não encontrada no sistema.")
 
-                # Enquanto houver itens alocados e a baixa ainda não foi confirmada,
-                # trava a navegação para outras páginas (ver barra lateral).
+                # Itens alocados e baixa não confirmada: trava a navegação.
                 st.session_state.alocacao_pendente = bool(ids_utilizados)
 
                 if ids_utilizados:
@@ -933,19 +1173,13 @@ if st.session_state.pagina_atual == "automacao":
                                 except ValueError:
                                     resposta = {}
 
-                                # O Apps Script sempre responde com HTTP 200, mesmo quando ele
-                                # mesmo capturou um erro internamente (planilha/aba não encontrada,
-                                # item não localizado etc). Por isso não basta a chamada não ter
-                                # "explodido" — é preciso checar o campo "result" que o script devolve
-                                # para não mostrar "sucesso" quando na verdade nada foi gravado.
+                                # O Apps Script responde HTTP 200 mesmo com erro interno,
+                                # por isso é preciso checar o campo "result".
                                 if resposta.get("result") != "success":
                                     raise RuntimeError(
                                         resposta.get("message", f"Resposta inesperada do servidor: {resposta_bruta[:300]}")
                                     )
 
-                                # Só marca os itens como consumidos (some da visão de todo mundo)
-                                # e só trava o arquivo como "já processado" DEPOIS de confirmar
-                                # que a planilha central foi atualizada com sucesso.
                                 for p in ids_utilizados:
                                     st.session_state.seriais_consumidos.add(str(p["serie"]).strip())
                                     st.session_state.ids_consumidos.add(str(p["id_est"]).strip())
@@ -957,9 +1191,7 @@ if st.session_state.pagina_atual == "automacao":
                                 }
                                 st.session_state.alocacao_pendente = False
 
-                                # Troca a "key" do uploader para a próxima renderização —
-                                # isso faz o Streamlit tratá-lo como um campo novo/vazio,
-                                # limpando o PDF anexado automaticamente (sem precisar de F5).
+                                # Troca a "key" do uploader para limpar o PDF anexado.
                                 st.session_state.packing_uploader_key += 1
 
                                 st.cache_data.clear()
@@ -988,72 +1220,12 @@ if st.session_state.pagina_atual == "automacao":
         with c_esq: btn_copia("DEPOSITANTE", val_depositante, "d"); btn_copia("PALETE", val_palete, "p")
         with c_dir: btn_copia("ID ITEM", val_id, "i"); btn_copia("TE DO ESTUDO", val_te, "t")
 
-        # --- CONSTRUÇÃO DAS PARTICULARIDADES COM REGRAS DE CITOTÓXICOS ---
-        paragrafos = [
-            "Verificar se no processo consta Packing List e atentar se a quantidade, lote e validade está de acordo com as informações retiradas do sistema LOGIX."
-        ]
-        
-        if tem_temptale: 
-            paragrafos.extend([
-                "Houve envio de medicação AMBIENTE.", 
-                "As medicações foram acondicionadas em embalagem apropriada CREDO validada pelo cliente com TempTale ULTRA USB ambiente conforme solicitado pelo cliente."
-            ])
-        if tem_tagalert_amb: 
-            paragrafos.extend([
-                "Houve envio de medicação AMBIENTE.", 
-                "As medicações foram acondicionadas em embalagem CREDO com Tag Alert ambiente conforme solicitado pelo cliente."
-            ])
-        if tem_tagalert_ref: 
-            paragrafos.extend([
-                "Houve envio de medicação REFRIGERADA.", 
-                "As medicações foram acondicionadas em embalagem apropriada caixa CREDO SÉRIE 04 com Tag Alert refrigerado conforme solicitado pelo cliente."
-            ])
-            
-        paragrafos.append("Time DOC: Não aplicar o desconto padrão de 1 hora na SC de Envio caso o centro já tenha reduzido o período no agendamento.")
-        
-        # Detecção e adição das regras específicas de Citotóxicos
-        if "BORTEZOMIB" in texto_upper:
-            paragrafos.extend([
-                "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 6.1” quando houver o envio de “BORTEZOMIB”",
-                "Para envios da medicação BORTEZOMIB, será anexado ficha de segurança do produto.",
-                "Para envios da medicação BORTEZOMIB, deverá ser encaminhado em caixa separada quando houver envio de mais medicações.",
-                "As medicações foram acondicionadas em embalagem apropriada CREDO validada pelo cliente com TempTale ULTRA USB ambiente conforme solicitado pelo cliente.",
-                "A etiqueta do Logger USB deve ir colada na Packing List de envio.",
-                "Produtos com temperaturas diferentes seguirão em caixas separadas quando houver a necessidade de TT4."
-            ])
-
-        if "SPRYCEL" in texto_upper or "DASATINIB" in texto_upper:
-            paragrafos.extend([
-                "As medicações foram acondicionadas em embalagem apropriada CREDO 28L validada pelo cliente com Tag Alert ambiente conforme solicitado pelo cliente.",
-                "No caso de medicações comerciais, as medicações estão devidamente etiquetadas com a etiqueta de venda proibida.",
-                "Para envios da medicação DASATINIB ou SPRYCEL, será anexado ficha de segurança do produto.",
-                "Para envios da medicação DASATINIB ou SPRYCEL, deverá ser encaminhado em caixa separada quando houver envio de mais medicações.",
-                "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 6.1” quando houver o envio de “DASATINIB OU SPRYCEL."
-            ])
-
-        if re.search(r"PACLITAXEL|TAXOL", texto_upper):
-            paragrafos.extend([
-                "As medicações foram acondicionadas em embalagem apropriada CREDO 28L validada pelo cliente com Tag Alert ambiente conforme solicitado pelo cliente.",
-                "O formulário de requisição dos produtos comerciais, deverá ser enviado para a Instituição de destino.",
-                "No caso de medicações comerciais, as medicações estão devidamente etiquetadas com a etiqueta de venda proibida.",
-                "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 3” quando houver o envio de “TAXOL OU PACLITAXEL”",
-                "Para envios da medicação PACLITAXEL ou TAXOL, será anexado ficha de segurança do produto.",
-                "Para envios da medicação PACLITAXEL ou TAXOL, deverá ser encaminhado em caixa separada quando houver envio de mais medicações."
-            ])
-
-        if "CYCLOPHOSPHAMIDE" in texto_upper or "CICLOFOSFAMIDA" in texto_upper:
-            paragrafos.extend([
-                "As medicações foram acondicionadas em embalagem apropriada CREDO 28L com Tag Alert ambiente conforme solicitado pelo cliente.",
-                "As caixas foram devidamente identificadas com a Etiqueta “Excepted Quantity Nº 6.1” quando houver o envio de “CICLOFOSFAMIDA”",
-                "Para envios da medicação CICLOFOSFAMIDA, será anexado ficha de segurança do produto.",
-                "Para envios da medicação CICLOFOSFAMIDA, deverá ser encaminhado em caixa separada quando houver envio de mais medicações.",
-                "As medicações foram acondicionadas em embalagem apropriada CREDO 28L validada pelo cliente com TempTale ULTRA USB ambiente conforme solicitado pelo cliente.",
-                "A etiqueta do Logger USB deve ir colada na Packing List de envio.",
-                "Produtos com temperaturas diferentes seguirão em caixas separadas quando houver a necessidade de TT4."
-            ])
-
-        texto_final = "\n\n".join(paragrafos)
-        components.html(f"""<button onclick="navigator.clipboard.writeText(`{texto_final}`); this.innerText='📋 Texto Copiado!';" style="background:#e59235; color:white; font-size:13px; font-weight:bold; padding:8px; border:none; border-radius:4px; width:100%; cursor:pointer;">📋 Copiar Particularidades</button>""", height=40)
+        # --- CHECKLIST DE PARTICULARIDADES (NOVO PADRÃO) ---
+        st.markdown("### ✅ Checklist de Particularidades (novo padrão)")
+        renderizar_checklist_particularidades(
+            texto_upper, arquivo_id,
+            qtd_temptale, qtd_tagalert_amb, qtd_tagalert_ref, tem_citotoxico,
+        )
 
         st.markdown("### ⏱️ SLA e Prazos Operacionais")
         prazo_maximo = somar_dias_uteis(data_recebimento, 7)
@@ -1102,9 +1274,8 @@ elif st.session_state.pagina_atual == "cruzamento":
                 try:
                     leitor_sol = PdfReader(arquivo_sol)
                     texto_sol = extrair_texto_pdf(leitor_sol, " ")
-                    # Acentos removidos: a NEWSE e o Packing List nem sempre extraem
-                    # acentuação da mesma forma (ex: "FUNDAÇÃO" vs "FUNDACAO"), então
-                    # comparar sem acento evita divergência falsa só por causa disso.
+                    # Sem acentos: NEWSE e Packing List nem sempre extraem a
+                    # acentuação da mesma forma ("FUNDAÇÃO" vs "FUNDACAO").
                     texto_sol_upper = remover_acentos(texto_sol.upper())
                     texto_sol_limpo = re.sub(r'\s+', ' ', texto_sol)
 
@@ -1115,14 +1286,9 @@ elif st.session_state.pagina_atual == "cruzamento":
 
                     def limpar(t): return re.sub(r'\s+', ' ', str(t)).strip()
 
-                    # --- Grupos de instituições conhecidas (para o campo Centre/Depto) ---
-                    # Cada grupo tem palavras-chave que podem aparecer com nomes
-                    # diferentes na NEWSE e no Packing List (sistemas diferentes,
-                    # grafias diferentes) mas se referem à mesma instituição.
-                    # Lista pequena de propósito — o campo NÃO depende só dela:
-                    # quando nenhum grupo bate mas o CEP dos dois documentos é
-                    # idêntico, isso já é usado como confirmação (ver mais abaixo),
-                    # em vez de bloquear a remessa só por causa da grafia do nome.
+                    # --- Grupos de instituições conhecidas (campo Centre/Depto) ---
+                    # Se nenhum grupo bater mas o CEP dos dois documentos for
+                    # idêntico, o CEP confirma o centro (ver mais abaixo).
                     GRUPOS_CENTRO = [
                         ("A. C. CAMARGO / FUNDAÇÃO ANTÔNIO PRUDENTE", ["CAMARGO", "PRUDENTE"]),
                         ("FUNDACAO PIO XII", ["PIO XII"]),
@@ -1141,9 +1307,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                     s_prot_match = re.search(r"(CA\d+-\d+)", texto_sol_upper)
                     s_prot = s_prot_match.group(1) if s_prot_match else "NÃO CONSTA"
 
-                    # Na NEWSE, o campo "Número da ordem" é onde o número do Delivery
-                    # (não do Order) da BMS acaba sendo registrado — por isso o termo
-                    # em português "ORDEM" entra na busca, junto dos termos em inglês.
+                    # Na NEWSE, "Número da ordem" é onde o Delivery da BMS é registrado.
                     s_ship_match = re.search(r"(?:NUMERO DA ORDEM|ORDEM|ORDER|SHIPMENT)[^\d]*(\d{8,12})", texto_sol_upper)
                     s_ship = s_ship_match.group(1) if s_ship_match else (re.search(r"\b(8\d{9})\b", texto_sol_limpo).group(1) if re.search(r"\b(8\d{9})\b", texto_sol_limpo) else "NÃO CONSTA")
 
@@ -1171,23 +1335,14 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_addr = p_cep_match.group(1).replace("-", "") if p_cep_match else "NÃO CONSTA"
 
                     # --- Investigator Name ---
-                    # O Packing List tem um formato limpo e consistente ("Dr(a).
-                    # Fulano de Tal" seguido de "Tel:"), muito mais confiável do que
-                    # tentar reconhecer o nome dentro do layout da NEWSE (que varia
-                    # e às vezes reordena os campos). Por isso o nome é extraído do
-                    # Packing List e depois procurado dentro do texto da NEWSE — em
-                    # vez de uma lista fixa de nomes conhecidos, que travava qualquer
-                    # investigador novo com uma falsa divergência.
+                    # O nome é extraído do Packing List (formato limpo: "Dr(a). Fulano
+                    # ... Tel:") e depois procurado no texto da NEWSE, em vez de usar
+                    # uma lista fixa de nomes.
                     p_pi_match = re.search(r"DR\.?A?\.?\s+([A-Z][A-Z\s]+?)\s*TEL\s*:", texto_packing_upper)
                     p_pi = limpar(p_pi_match.group(1)) if p_pi_match else "NÃO CONSTA"
 
-                    # Comparação tolerante a pequenas diferenças de grafia/digitação
-                    # entre os sistemas (ex: nome do meio duplicado ou digitado com
-                    # uma letra diferente no Packing List). Em vez de exigir o nome
-                    # inteiro como substring exata, confirma-se pelo PRIMEIRO e
-                    # ÚLTIMO nome (mais estável entre os dois documentos) — reduz
-                    # falsos "divergência" por causa de erro de digitação em nomes
-                    # do meio, mantendo baixo risco de confirmar a pessoa errada.
+                    # Tolerante a erro de digitação no nome do meio: confirma pelo
+                    # PRIMEIRO e ÚLTIMO nome.
                     pi_investigador_conferido = False
                     pi_exato = False
                     if p_pi != "NÃO CONSTA":
@@ -1208,7 +1363,7 @@ elif st.session_state.pagina_atual == "cruzamento":
                     p_qty_matches = re.findall(r"(\d+)\s*EA", texto_packing_upper)
                     p_qty = str(sum([int(q) for q in p_qty_matches])) if p_qty_matches else "NÃO CONSTA"
 
-                    # Coleta de Seriais da Packing List (Documento Validado)
+                    # Seriais da Packing List
                     seriais_packing = []
                     serial_matches = re.findall(r"SERIAL\s*NO\.?\s*\(([^)]+)\)", texto_packing_upper)
                     if serial_matches:
@@ -1225,23 +1380,11 @@ elif st.session_state.pagina_atual == "cruzamento":
                         seriais_packing = re.findall(r"\b\d{5,8}\b", texto_packing_upper)
                     seriais_packing = list(dict.fromkeys(seriais_packing))
 
-                    # Coleta de Seriais da NEWSE — extraídos da própria tabela de
-                    # produtos da NEWSE (número que aparece logo antes de "AREA
-                    # CLIMATIZADA" ou "CAMARA FRIA" em cada linha), em vez de apenas
-                    # verificar se os números do Packing List aparecem em algum lugar
-                    # do texto da NEWSE. O método antigo podia dar falso positivo
-                    # (um serial coincidir com pedaço de CEP/CNPJ/telefone) e não
-                    # detectava serial que a NEWSE tivesse a mais.
-                    # O \b (limite de palavra) antes do grupo é necessário porque a
-                    # série de um logger (ex: Tag Alert) às vezes vem no formato
-                    # alfanumérico "15450K53039" — sem o \b, a regex pescava só o
-                    # pedaço final em dígitos ("53039") como se fosse um serial de
-                    # produto de verdade, inflando a quantidade e criando uma
-                    # divergência falsa nessa linha.
+                    # Seriais da NEWSE: número logo antes de "AREA CLIMATIZADA" ou
+                    # "CAMARA FRIA". O \b evita pescar só o final de séries
+                    # alfanuméricas de logger (ex: "15450K53039").
                     seriais_newse = re.findall(r"\b(\d{5,7})\s*(?:AREA|CAMARA)", texto_sol_upper)
                     if not seriais_newse:
-                        # Layout de NEWSE não reconhecido — usa o método antigo como
-                        # rede de segurança em vez de não comparar nada.
                         seriais_newse = [s for s in seriais_packing if s in texto_sol_upper]
                     seriais_newse = list(dict.fromkeys(seriais_newse))
 
@@ -1252,12 +1395,8 @@ elif st.session_state.pagina_atual == "cruzamento":
                     s_qty = str(len(seriais_newse)) if seriais_newse else "NÃO CONSTA"
 
                     # --- COMPARAÇÃO ESTRITA ---
-                    # Confirmação cruzada: quando o nome da instituição não é
-                    # reconhecido em nenhum dos dois documentos (ou está escrito de
-                    # forma diferente entre os dois sistemas), mas o CEP de destino
-                    # dos dois documentos é idêntico, isso já confirma que é o mesmo
-                    # endereço/centro de destino — não faz sentido bloquear a
-                    # remessa só porque o nome não bateu ou não foi reconhecido.
+                    # Se o nome do centro não foi reconhecido/difere entre os sistemas
+                    # mas o CEP é idêntico, o CEP confirma o centro.
                     centro_confirmado_por_alias = (s_centre != "NÃO CONSTA" and s_centre == p_centre)
                     centro_confirmado_por_cep = (
                         not centro_confirmado_por_alias
@@ -1357,13 +1496,6 @@ elif st.session_state.pagina_atual == "cruzamento":
 # ==========================================
 # PÁGINA: CONFERÊNCIA DE AGENDAMENTO (Packing List x NEWSE x Agendamento x Minuta)
 # ==========================================
-# Portado do painel "Validador DRS Group - Logística" (artifact separado do
-# usuário) para dentro do Portal BMS, como uma aba própria — e reescrito para
-# fazer conferência DE VERDADE campo a campo (a versão original só mostrava
-# "Verificado no Portal" fixo, sem checar nada de fato). Mantém os mesmos 3
-# estágios do painel original, mas agora cada campo é extraído dos dois
-# documentos e comparado de verdade, com o valor de cada lado sempre visível
-# na tela — nunca só "Verificar PDF".
 elif st.session_state.pagina_atual == "conferencia_agendamento":
 
     st.markdown("""
@@ -1387,35 +1519,29 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
     col_excluir, col_excluir_vazio = st.columns([1, 4])
     with col_excluir:
         if st.button("🗑️ Excluir PDFs", key="conf_excluir_topo", use_container_width=True):
-            # Limpa os uploads das 3 etapas de uma vez (todas usam essa mesma
-            # "key" como sufixo — trocá-la faz o Streamlit tratar cada
-            # file_uploader como um campo novo/vazio) — para quando a pessoa
-            # errou algum arquivo ou só quer recomeçar do zero.
+            # Limpa os uploads das 3 etapas de uma vez (trocar a "key" faz o
+            # file_uploader virar um campo novo/vazio).
             st.session_state.conferencia_uploader_key += 1
             st.session_state.conf_etapa3_resultado = None
             st.session_state.conf_etapa3_confirmado = False
             st.rerun()
 
     def extrair_texto_pdf_conferencia(arquivo):
-        """Mesma extração usada no resto do portal (pypdf), mas mantendo uma
-        quebra de linha entre páginas — os regex desta página dependem de
-        '\\n' para não vazar de uma linha para a próxima."""
+        """Extração com pypdf mantendo '\\n' entre páginas (os regex desta
+        página dependem de quebra de linha)."""
         leitor_conf = PdfReader(arquivo)
         return extrair_texto_pdf(leitor_conf, separador="\n")
 
     def normalizar_alfanum(t):
-        """Maiúsculo e só letras/dígitos — remove espaço, hífen, barra, ponto
-        etc. Usado para achar um Lote dentro do texto da NEWSE mesmo quando a
-        extração do PDF grudou/quebrou a formatação original (comum em
-        tabelas de PDF)."""
+        """Maiúsculo e só letras/dígitos — para achar um Lote no texto da NEWSE
+        mesmo quando a extração do PDF grudou/quebrou a formatação."""
         return re.sub(r"[^A-Z0-9]", "", str(t).upper())
 
     def so_digitos(t):
         return re.sub(r"\D", "", str(t))
 
     def extrair_lista_contatos(texto_bruto):
-        """Recebe um bloco de texto bruto (pode ter quebras de linha no meio
-        dos nomes) e devolve uma lista de nomes limpos, separados por '/'."""
+        """Bloco de texto bruto -> lista de nomes limpos separados por '/'."""
         texto_limpo = re.sub(r"\s+", " ", str(texto_bruto)).strip()
         nomes = []
         for parte in texto_limpo.split("/"):
@@ -1427,11 +1553,9 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
         return nomes
 
     def comparar_listas_nomes(lista_a, texto_b_bruto):
-        """Confere se cada nome da lista_a aparece no texto_b_bruto. Compara
-        com TODOS os espaços removidos dos dois lados (além de acento/caixa)
-        porque alguns PDFs (ex: a Minuta) têm um artefato de fonte que insere
-        um espaço extra no meio de palavras ("V itoria", "CONT ATO") — sem
-        isso, esses nomes apareceriam como falsa divergência."""
+        """Confere se cada nome da lista_a aparece no texto_b_bruto, comparando
+        com TODOS os espaços removidos (a Minuta tem um artefato de fonte que
+        insere espaço no meio de palavras, ex: 'V itoria')."""
         texto_b_normalizado = re.sub(r"\s+", "", remover_acentos(str(texto_b_bruto).upper()))
         encontrados, faltando = [], []
         for nome in lista_a:
@@ -1446,8 +1570,7 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                   "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12}
 
     def data_para_iso(data_str):
-        """Converte '31-AUG-2028' (formato do Packing List) -> '2028-08-31'
-        (formato usado na NEWSE). Devolve None se não reconhecer o formato."""
+        """'31-AUG-2028' (Packing List) -> '2028-08-31' (NEWSE). None se não reconhecer."""
         m = re.match(r"(\d{1,2})-([A-Za-z]{3})-(\d{4})", str(data_str).strip())
         if not m:
             return None
@@ -1458,10 +1581,8 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
         return f"{ano}-{mes:02d}-{int(dia):02d}"
 
     def extrair_itens_packing(texto):
-        """Extrai cada item de produto da Packing List: Material, Batch
-        (Lote), Quantity, Use Date (Validade) e a lista de números de série —
-        a partir do bloco 'Shipping Information' (Material Batch Quantity Use
-        Date / Serial No. (...))."""
+        """Extrai cada item da Packing List: Material, Batch (Lote), Quantity,
+        Use Date (Validade) e a lista de números de série."""
         itens = []
         padrao_item = re.compile(
             r"(\d{5,8})\s+([A-Z0-9\.\-]+)\s+(\d+)\s*EA\s+(\d{1,2}-[A-Z]{3}-\d{4})",
@@ -1487,18 +1608,10 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
         return itens
 
     def extrair_seriais_produtos_newse(texto_newse_bruto):
-        """Lê a tabela 'Produto(s)' da NEWSE e devolve um dicionário
-        serial -> [validades associadas a ele]. A extração de PDF grudona
-        Nome+Lote+Validade+Série numa sequência contínua de caracteres sem
-        separador confiável entre eles (ex: 'ADE45722028-08-31145783AREA') —
-        por isso, em vez de tentar separar essas colunas, a técnica aqui
-        procura, em toda a tabela normalizada (só letras/dígitos), o padrão
-        <data no formato AAAAMMDD><dígitos do serial>, sempre imediatamente
-        seguido de 'AREA' ou 'CAMARA' (a área de armazenamento que a NEWSE
-        sempre imprime logo depois da série de cada produto). Isso funciona
-        mesmo com o Lote grudado na frente da data, porque só uma posição de
-        início permite que a data (8 dígitos) e a série (o resto) encaixem
-        exatamente até 'AREA'/'CAMARA' — testado com um documento NEWSE real."""
+        """Lê a tabela 'Produto(s)' da NEWSE e devolve serial -> [validades].
+        A extração do PDF gruda Nome+Lote+Validade+Série sem separador (ex:
+        'ADE45722028-08-31145783AREA'), então procura na tabela normalizada o
+        padrão <data AAAAMMDD><dígitos do serial> seguido de 'AREA'/'CAMARA'."""
         bloco = texto_newse_bruto.split("Produto(s)")[-1]
         if "Observações" in bloco:
             bloco = bloco.split("Observações")[0]
@@ -1512,9 +1625,8 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
         return mapa_serial_para_validades, bloco_normalizado
 
     def linha_conferencia(campo, valor_a, valor_b, ok, obs_ok, obs_divergente):
-        """Renderiza uma linha da tabela de conferência (campo, valor de cada
-        lado e status) e devolve se ela está OK — sempre mostrando os dois
-        valores extraídos, nunca um texto fixo tipo 'Verificado no Portal'."""
+        """Renderiza uma linha da tabela de conferência (sempre mostrando os dois
+        valores extraídos) e devolve se está OK."""
         c1, c2, c3, c4 = st.columns([2.3, 2.2, 2.2, 1.6])
         c1.write(f"**{campo}**")
         c2.text(valor_a if valor_a else "—")
@@ -1574,8 +1686,7 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                 cep_n = m_cep_n.group(1).replace("-", "") if m_cep_n else "NÃO LOCALIZADO"
                 ok_cep = cep_p != "NÃO LOCALIZADO" and cep_p == cep_n
 
-                # --- Investigador: fonte é a NEWSE (campo bem identificado lá),
-                # e depois confere se o nome aparece no texto da Packing List ---
+                # --- Investigador: fonte é a NEWSE; confere se aparece na Packing List ---
                 m_inv_n = re.search(
                     r"Investigador\(es\) Principal\(is\) / M[eé]dico\(s\)\s*\n?Nome\s*\n?([^\n]+)",
                     t_newse, re.IGNORECASE,
@@ -1673,7 +1784,6 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                 elif itens_packing:
                     st.success("✅ Nenhum serial a mais na NEWSE — todos os produtos da NEWSE têm correspondência na Packing List.")
 
-                # Blocos de texto bruto, para conferência visual manual adicional
                 col_d1, col_d2 = st.columns(2)
                 with col_d1:
                     with st.expander("Ver texto bruto extraído da Packing List"):
@@ -1843,8 +1953,7 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                     t_newse3, re.IGNORECASE | re.DOTALL,
                 )
                 contatos_n3 = extrair_lista_contatos(m_contatos_n3.group(1)) if m_contatos_n3 else []
-                # "CONTATO" e "COLETA" às vezes saem com um espaço extra no meio
-                # ("CONT ATO", "COLET A") por um artefato de fonte da Minuta.
+                # "CONTATO" e "COLETA" às vezes saem com espaço extra ("CONT ATO").
                 m_contatos_m = re.search(
                     r"CONT\s*ATO AUTORIZADO ENTREGA\s*(.+?)CONT\s*ATO AUTORIZADO COLET\s*A",
                     t_minuta, re.IGNORECASE | re.DOTALL,
@@ -1856,15 +1965,9 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                 m_transp = re.search(r"DRS\s*(COURIER|ADMINISTRA[CÇ][AÃ]O DE ESTOQUES)", t_minuta, re.IGNORECASE)
                 ok_transp = bool(m_transp)
 
-                # Monta a lista de linhas (sem renderizar ainda) e guarda o
-                # resultado em session_state — em vez de desenhar a tabela
-                # direto aqui dentro do "if st.button(...)". Isso é necessário
-                # porque os botões "OK" e "Liberar Processo" (mais abaixo)
-                # disparam um novo rerun do Streamlit, e nesse novo rerun o
-                # botão "Executar Auditoria Final" não estaria mais
-                # "pressionado" — sem guardar o resultado, a tabela e o
-                # resultado sumiriam da tela assim que a pessoa clicasse em
-                # "OK".
+                # Guarda o resultado em session_state (em vez de desenhar direto
+                # aqui): os botões "OK" e "Liberar Processo" disparam novo rerun e
+                # o botão "Executar Auditoria Final" não estaria mais pressionado.
                 linhas_3 = [
                     ("Protocolo / Estudo", prot_n3, prot_m, ok_prot3,
                      "Protocolo idêntico nos dois documentos.",
@@ -1894,14 +1997,11 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
                 ]
                 aprovado_3 = all(linha[3] for linha in linhas_3)
                 st.session_state.conf_etapa3_resultado = {"linhas": linhas_3, "aprovado": aprovado_3}
-                # Nova auditoria executada: qualquer confirmação de OK anterior
-                # deixa de valer, tem que revisar e confirmar de novo.
+                # Nova auditoria: qualquer confirmação de OK anterior deixa de valer.
                 st.session_state.conf_etapa3_confirmado = False
             else:
                 st.warning("Por favor, faça o upload de todos os três documentos exigidos.")
 
-        # Renderiza o resultado guardado (se houver) — continua na tela mesmo
-        # depois de reruns causados pelos botões "OK" e "Liberar Processo".
         resultado_3 = st.session_state.conf_etapa3_resultado
         if resultado_3:
             st.markdown("### 📋 Tabela de Conferência Analítica - Etapa 3")
@@ -1915,9 +2015,7 @@ elif st.session_state.pagina_atual == "conferencia_agendamento":
 
             st.markdown("---")
 
-            # Confirmação obrigatória antes de liberar o processo — só depois
-            # de clicar em "OK" é que aparece o lembrete e o botão para
-            # limpar os PDFs das 3 etapas.
+            # Confirmação obrigatória antes de liberar o processo.
             if not st.session_state.conf_etapa3_confirmado:
                 if st.button("✅ OK — Revisei o Resultado da Etapa 3", key="conf_etapa3_ok_btn", use_container_width=True):
                     st.session_state.conf_etapa3_confirmado = True
@@ -1954,9 +2052,7 @@ elif st.session_state.pagina_atual == "bms_brasil":
     )
 
     if arquivo_newse_brasil is None:
-        # Mesma lógica da página de Automação: sem arquivo anexado, nada foi
-        # de fato retirado do estoque ainda, então a navegação não precisa
-        # ficar travada — permite cancelar só removendo o arquivo.
+        # Sem arquivo anexado nada foi retirado do estoque: libera a navegação.
         st.session_state.alocacao_pendente = False
 
     if arquivo_newse_brasil is not None:
@@ -1969,8 +2065,7 @@ elif st.session_state.pagina_atual == "bms_brasil":
         if match_protocolo_brasil:
             estudo_brasil = match_protocolo_brasil.group(0)
 
-        # --- TE do estudo: primeiro tenta achar impresso na própria NEWSE;
-        # se não achar, cai no mesmo fallback por planilha usado na Automação ---
+        # --- TE do estudo: tenta achar impresso na NEWSE; senão usa a planilha ---
         te_brasil = "NÃO ENCONTRADO"
         match_te_brasil = re.search(r"\bTE\s*(\d{3,5})\b", texto_brasil_upper)
         if match_te_brasil:
@@ -1980,7 +2075,7 @@ elif st.session_state.pagina_atual == "bms_brasil":
                 if estudo_brasil != "NÃO IDENTIFICADO" and estudo_brasil in str(row['Estudo']).upper():
                     te_brasil = str(row['TE']).strip(); break
 
-        # --- Centro / instituição de destino (apenas para exibição/contexto) ---
+        # --- Centro / instituição de destino (apenas para exibição) ---
         centro_brasil = "NÃO IDENTIFICADO"
         match_centro_brasil = re.search(
             r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\s*-\s*([A-ZÀ-Ú\s]+?)\s*\d{2}\.\d{3}\.\d{3}",
@@ -2004,9 +2099,7 @@ elif st.session_state.pagina_atual == "bms_brasil":
         if not tem_ref_brasil and not tem_amb_brasil:
             st.warning("⚠️ Não foi possível identificar a faixa de temperatura (Ambiente/Refrigerado) nesta NEWSE. Verifique o documento manualmente.")
 
-        # Identidade estável deste upload — evita duplicar a retirada se a
-        # página recarregar com o mesmo PDF ainda anexado (mesmo padrão da
-        # página de Automação).
+        # Identidade estável deste upload (evita duplicar a retirada no rerun).
         arquivo_id_brasil = getattr(arquivo_newse_brasil, "file_id", None) or f"{arquivo_newse_brasil.name}_{arquivo_newse_brasil.size}"
         registro_existente_brasil = st.session_state.solicitacoes_brasil_registradas.get(arquivo_id_brasil)
 
@@ -2041,9 +2134,8 @@ elif st.session_state.pagina_atual == "bms_brasil":
                     else:
                         st.warning(f"⚠️ **{label}**: Sem saldo disponível no estoque!")
 
-                # Só Tag Alert — solicitações Brasil não usam TempTale (pedido
-                # explícito do usuário: "para solicitações brasil não mandamos
-                # TEMPTALE"). Um Tag Alert por faixa de temperatura detectada.
+                # Só Tag Alert — solicitações Brasil não usam TempTale.
+                # Um Tag Alert por faixa de temperatura detectada.
                 if tem_amb_brasil:
                     allocate_logger_brasil("TAGALERT 15-25", "Tag Alert Ambiente")
                 if tem_ref_brasil:
@@ -2067,10 +2159,7 @@ elif st.session_state.pagina_atual == "bms_brasil":
 
                 col_id_brasil, col_btn_brasil = st.columns([2, 1])
                 with col_id_brasil:
-                    # Campo travado de propósito — pedido explícito do usuário:
-                    # solicitações Brasil não têm um DEL# de verdade, então o
-                    # identificador fica fixo como "Solicitação Brasil" (não
-                    # editável) em vez de um campo de texto livre.
+                    # Campo travado de propósito: solicitações Brasil não têm DEL#.
                     st.text_input("Identificador para registro:", value="Solicitação Brasil", disabled=True)
                 with col_btn_brasil:
                     st.write("")
