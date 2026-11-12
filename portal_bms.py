@@ -9,6 +9,7 @@ import json
 import time
 import os
 import unicodedata
+   from particularidades import renderizar_checklist_particularidades
 
 try:
     import pytesseract
