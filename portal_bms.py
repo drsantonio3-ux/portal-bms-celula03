@@ -576,7 +576,7 @@ def renderizar_checklist_particularidades(texto_upper, arquivo_id, qtd_temptale,
     _checklist_particularidades(texto_upper, arquivo_id, qtd_temptale,
                                 qtd_tagalert_amb, qtd_tagalert_ref, tem_citotoxico)
 
-
+from particularidades import renderizar_checklist_particularidades
 # --- CONFIGURAÇÕES DA PÁGINA (SaaS Logístico - Wide) ---
 st.set_page_config(page_title="DRS Group | BMS Operations", layout="wide", page_icon="🏢")
 
