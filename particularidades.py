@@ -26,6 +26,15 @@ OBS_WHS_CITOTOXICO = [
     "Etiquetar os volumes com etiqueta excepted quantities.",
 ]
 
+# CYTOTOXIC: escolha obrigatória na hora do atendimento (nunca fixa)
+OBS_WHS_CREDO_IGARAI = (
+    "As medicações devem ser acondicionadas em embalagem CREDO, a QUAL deverá ser "
+    "ALOCADA DENTRO DE UMA CAIXA HOMOLOGADA IGARAI 4GV2 + VERMICULITA."
+)
+OBS_WHS_CREDO_SIMPLES = (
+    "As medicações seguirão com o envio em CREDO sem necessidade de IGARAI e VERMICULITA."
+)
+
 OPCAO_VALIDADE_NAO = "NÃO"
 OPCAO_VALIDADE_SIM = "SIM – OBRIGATÓRIO AUTORIZAÇÃO DO CLIENTE ANEXA"
 
@@ -250,6 +259,19 @@ def _checklist(texto_upper, arquivo_id, qtd_temptale, qtd_tag_amb, qtd_tag_ref, 
     for texto in OBS_WHS_CITOTOXICO:
         if st.checkbox(texto, value=eh_cito, key=k(f"whs_{_hash(texto)}")):
             obs_whs.append(texto)
+
+    escolha_credo = None
+    if eh_cito:
+        st.markdown("**Embalagem do CYTOTOXIC — escolha obrigatória:**")
+        escolha_credo = st.radio(
+            "Embalagem CYTOTOXIC", [OBS_WHS_CREDO_IGARAI, OBS_WHS_CREDO_SIMPLES],
+            index=None, key=k("credo"), label_visibility="collapsed",
+        )
+        if escolha_credo is None:
+            st.error("⛔ Escolha uma das 2 opções acima para liberar as particularidades.")
+        else:
+            obs_whs.append(escolha_credo)
+
     extra_whs = st.text_area(
         "Nova observação WHS (opcional — uma por linha):",
         key=k("whs_extra"), height=80,
@@ -259,6 +281,11 @@ def _checklist(texto_upper, arquivo_id, qtd_temptale, qtd_tag_amb, qtd_tag_ref, 
 
     st.markdown("**FISCAL**")
     st.caption("Sem particularidades fiscais.")
+
+    # CYTOTOXIC sem a escolha da embalagem: não gera nem libera a cópia
+    if eh_cito and escolha_credo is None:
+        st.warning("🔒 Particularidades bloqueadas: selecione a embalagem do CYTOTOXIC em OBSERVAÇÕES WHS.")
+        return
 
     # ---------------- Documento final ----------------
     linhas = ["CS:", "", "- ORDENS COMPLEMENTARES:"]
