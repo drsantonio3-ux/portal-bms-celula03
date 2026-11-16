@@ -2224,6 +2224,8 @@ elif st.session_state.pagina_atual == "bms_brasil":
             else:
                 st.warning("⚠️ Estoque indisponível no momento — não é possível alocar Tag Alert automaticamente.")
 
+        st.markdown("### ✅ Checklist de Particularidades — BMS Brasil")
+        renderizar_checklist_brasil(texto_brasil_upper, arquivo_id_brasil, tem_ref_brasil, tem_amb_brasil)
 # ==========================================
 # PÁGINA: GERADOR DE E-MAIL (GR)
 # ==========================================
