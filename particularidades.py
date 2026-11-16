@@ -279,14 +279,8 @@ def _checklist(texto_upper, arquivo_id, qtd_temptale, qtd_tag_amb, qtd_tag_ref, 
     )
     obs_whs += [l.strip() for l in (extra_whs or "").splitlines() if l.strip()]
 
-        st.markdown("**FISCAL**")
-    st.caption("Se nada for escrito, esta etapa não aparece nas particularidades.")
-    extra_fiscal = st.text_area(
-        "Observação FISCAL (opcional — uma por linha):",
-        key=k("fiscal_extra"), height=80,
-        placeholder="Digite uma informação fiscal, se precisar",
-    )
-    obs_fiscal = _unicos([l.strip() for l in (extra_fiscal or "").splitlines() if l.strip()])
+    st.markdown("**FISCAL**")
+    st.caption("Sem particularidades fiscais.")
 
     # CYTOTOXIC sem a escolha da embalagem: não gera nem libera a cópia
     if eh_cito and escolha_credo is None:
