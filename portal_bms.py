@@ -886,8 +886,6 @@ with st.sidebar:
     bloqueado = st.session_state.alocacao_pendente
     paginas_menu = [
         ("automacao", "📦  Automação de Packing List"),
-        ("cruzamento", "⚖️  Cruzamento NEWSE x PACKING"),
-        ("conferencia_agendamento", "🧾  Conferência de Agendamento"),
         ("bms_brasil", "🇧🇷  BMS Brasil - Solicitações"),
         ("email", "📧  Gerador de E-mail (GR)"),
     ]
