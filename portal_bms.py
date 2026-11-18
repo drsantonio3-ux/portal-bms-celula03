@@ -578,6 +578,7 @@ def renderizar_checklist_particularidades(texto_upper, arquivo_id, qtd_temptale,
 
 from particularidades import renderizar_checklist_particularidades
 from checklist_brasil import renderizar_checklist_brasil
+from leitura_packing import extrair_dados_packing_para_email
 # --- CONFIGURAÇÕES DA PÁGINA (SaaS Logístico - Wide) ---
 st.set_page_config(page_title="DRS Group | BMS Operations", layout="wide", page_icon="🏢")
 
