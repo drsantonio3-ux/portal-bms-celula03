@@ -35,7 +35,7 @@ OBS_WHS_CREDO_SIMPLES = (
     "As medicações seguirão com o envio em CREDO sem necessidade de IGARAI e VERMICULITA."
 )
 
-VERSAO_CHECKLIST = "v3 · embalagem CYTOTOXIC obrigatória"
+VERSAO_CHECKLIST = "v4 · embalagem CYTOTOXIC obrigatória"
 
 OPCAO_VALIDADE_NAO = "NÃO"
 OPCAO_VALIDADE_SIM = "SIM – OBRIGATÓRIO AUTORIZAÇÃO DO CLIENTE ANEXA"
@@ -263,7 +263,6 @@ def _checklist(texto_upper, arquivo_id, qtd_temptale, qtd_tag_amb, qtd_tag_ref, 
     for texto in OBS_WHS_CITOTOXICO:
         if st.checkbox(texto, value=eh_cito, key=k(f"whs_{_hash(texto)}")):
             obs_whs.append(texto)
-
     escolha_credo = None
     if eh_cito:
         st.markdown("**Embalagem do CYTOTOXIC — escolha obrigatória:**")
@@ -275,7 +274,6 @@ def _checklist(texto_upper, arquivo_id, qtd_temptale, qtd_tag_amb, qtd_tag_ref, 
             st.error("⛔ Escolha uma das 2 opções acima para liberar as particularidades.")
         else:
             obs_whs.append(escolha_credo)
-
     extra_whs = st.text_area(
         "Nova observação WHS (opcional — uma por linha):",
         key=k("whs_extra"), height=80,
@@ -284,7 +282,13 @@ def _checklist(texto_upper, arquivo_id, qtd_temptale, qtd_tag_amb, qtd_tag_ref, 
     obs_whs += [l.strip() for l in (extra_whs or "").splitlines() if l.strip()]
 
     st.markdown("**FISCAL**")
-    st.caption("Sem particularidades fiscais.")
+    st.caption("Se nada for escrito, esta etapa não aparece nas particularidades.")
+    extra_fiscal = st.text_area(
+        "Observação FISCAL (opcional — uma por linha):",
+        key=k("fiscal_extra"), height=80,
+        placeholder="Digite uma informação fiscal, se precisar",
+    )
+    obs_fiscal = _unicos([l.strip() for l in (extra_fiscal or "").splitlines() if l.strip()])
 
     # CYTOTOXIC sem a escolha da embalagem: não gera nem libera a cópia
     if eh_cito and escolha_credo is None:
@@ -324,12 +328,11 @@ def _checklist(texto_upper, arquivo_id, qtd_temptale, qtd_tag_amb, qtd_tag_ref, 
         linhas += ["", "OBSERVAÇÕES WHS:"]
         linhas += obs_whs
 
-    linhas += ["", "- FISCAL:"]
+    if obs_fiscal:
+        linhas += ["", "- FISCAL:"]
+        linhas += obs_fiscal
 
     texto_final = "\n".join(linhas)
-
-    st.markdown("#### 📄 Particularidades geradas")
-    st.code(texto_final, language="text")
 
     texto_js = json.dumps(texto_final, ensure_ascii=False).replace("</", "<\\/")
     components.html(
