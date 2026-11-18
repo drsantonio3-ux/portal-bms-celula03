@@ -281,7 +281,7 @@ OBS_WHS_CITOTOXICO = [
 ]
 
 OPCAO_VALIDADE_NAO = "NÃO"
-OPCAO_VALIDADE_SIM = "SIM – OBRIGATÓRIO AUTORIZAÇÃO DO CLIENTE ANEXA"
+OPCAO_VALIDADE_SIM = "SIM"
 
 # st.fragment (Streamlit >= 1.37): só o checklist recarrega a cada clique.
 _fragment = (
