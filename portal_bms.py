@@ -2589,7 +2589,7 @@ elif st.session_state.pagina_atual == "email":
         <div class="card-title">3. Destinatários do E-mail (Para / CC)</div>
         <div class="form-group">
           <label>E-mails para Copiar:</label>
-          <textarea id="recipients" rows="4">BMSOPSBLA@BMS.COM; Radu.Ciobanescu@bms.com; laura.sourwine@bms.com; cso.distribution@bms.com; MG-BRZ-IMPORT-CTA@bms.com; daniela.mizushima@bms.com; Giovana.Doretto2@bms.com</textarea>
+          <textarea id="recipients" rows="4">BMSOPSBLA@BMS.COM; Radu.Ciobanescu@bms.com; laura.sourwine@bms.com; cso.distribution@bms.com; MG-BRZ-IMPORT-CTA@bms.com; daniela.mizushima@bms.com;</textarea>
         </div>
         <button type="button" class="btn-copy" onclick="copyRecipients()">Copiar Destinatários</button>
       </div>
