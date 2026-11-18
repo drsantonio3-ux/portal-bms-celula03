@@ -2092,6 +2092,12 @@ elif st.session_state.pagina_atual == "bms_brasil":
         with c1: st.markdown(card_metrica("Centro / Instituição", centro_brasil), unsafe_allow_html=True)
         with c2: st.markdown(card_metrica("Protocolo / Estudo", estudo_brasil), unsafe_allow_html=True)
         with c3: st.markdown(card_metrica("TE Correspondente", te_brasil), unsafe_allow_html=True)
+                # DEPOSITANTE (CNPJ) — igual à Automação
+        m_dep_brasil = re.search(r"DEPOSITANTE\s*:?\s*(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})", texto_brasil_upper)
+        val_depositante_brasil = ("0" + re.sub(r"\D", "", m_dep_brasil.group(1))) if m_dep_brasil else "056998982001260"
+        components.html(f"""<div style="display:flex; justify-content:space-between; align-items: center; padding:6px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; margin-top:8px;">
+        <div><span style="color:#475569; font-weight:bold; font-size:11px;">DEPOSITANTE:</span> <span style="font-family:monospace; color:#209b7c; font-size:13px; font-weight:bold; margin-left:5px;">{val_depositante_brasil}</span></div>
+        <button onclick="navigator.clipboard.writeText('{val_depositante_brasil}'); this.innerText='Copiado!'; setTimeout(()=>this.innerText='Copiar', 2000)" style="background:#209b7c; color:white; border:none; border-radius:3px; cursor:pointer; font-size:11px; padding:4px 10px; font-weight:bold;">Copiar</button></div>""", height=50)
         st.write("")
 
         st.markdown("### 🏷️ Retirada de Tag Alert")
