@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Checklist de Particularidades da página BMS Brasil - Solicitações.
 
-Ao subir a NEWSE, o usuário escolhe MEDICAÇÃO ou EQUIPAMENTO / SUPRIMENTO e
-o portal gera o modelo fixo de cada categoria.
+A categoria (MEDICAÇÃO ou EQUIPAMENTO / SUPRIMENTO) vem da página do portal;
+aqui só se monta o modelo fixo de cada categoria.
 """
 
 import json
@@ -11,7 +11,7 @@ import re
 import streamlit as st
 import streamlit.components.v1 as components
 
-VERSAO_CHECKLIST_BRASIL = "Brasil v1"
+VERSAO_CHECKLIST_BRASIL = "Brasil v2"
 
 CATEGORIA_MEDICACAO = "MEDICAÇÃO"
 CATEGORIA_SUPRIMENTO = "EQUIPAMENTO / SUPRIMENTO"
@@ -82,9 +82,6 @@ def _unicos(linhas):
 def _exibir_resultado(linhas):
     texto_final = "\n".join(linhas)
 
-    st.markdown("#### 📄 Particularidades geradas")
-    st.code(texto_final, language="text")
-
     texto_js = json.dumps(texto_final, ensure_ascii=False).replace("</", "<\\/")
     components.html(
         f"""
@@ -106,21 +103,12 @@ def _exibir_resultado(linhas):
 
 
 @_fragment
-def _checklist_brasil(texto_upper, arquivo_id, tem_ref, tem_amb):
+def _checklist_brasil(texto_upper, arquivo_id, tem_ref, tem_amb, categoria):
 
     def k(nome):
         return f"brasil_{nome}_{arquivo_id}"
 
     st.caption(f"Checklist {VERSAO_CHECKLIST_BRASIL}")
-
-    st.markdown("**Esta solicitação é de qual categoria?**")
-    categoria = st.radio(
-        "Categoria da solicitação", [CATEGORIA_MEDICACAO, CATEGORIA_SUPRIMENTO],
-        index=None, horizontal=True, key=k("categoria"), label_visibility="collapsed",
-    )
-    if categoria is None:
-        st.info("Escolha a categoria para abrir o checklist de particularidades.")
-        return
 
     # ======================= MEDICAÇÃO =======================
     if categoria == CATEGORIA_MEDICACAO:
@@ -301,5 +289,7 @@ def _checklist_brasil(texto_upper, arquivo_id, tem_ref, tem_amb):
     _exibir_resultado(linhas)
 
 
-def renderizar_checklist_brasil(texto_upper, arquivo_id, tem_ref, tem_amb):
-    _checklist_brasil(texto_upper, arquivo_id, tem_ref, tem_amb)
+def renderizar_checklist_brasil(texto_upper, arquivo_id, tem_ref, tem_amb, categoria):
+    """A categoria (MEDICAÇÃO ou EQUIPAMENTO / SUPRIMENTO) é escolhida na própria
+    página do portal, antes da retirada de Tag Alert."""
+    _checklist_brasil(texto_upper, arquivo_id, tem_ref, tem_amb, categoria)
