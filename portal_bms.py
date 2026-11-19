@@ -8,123 +8,16 @@ import urllib.request
 import json
 import time
 import os
-import unicodedata
-import hashlib
-
-try:
-    import pytesseract
-    from pdf2image import convert_from_bytes
-    OCR_DISPONIVEL = True
-except Exception:
-    OCR_DISPONIVEL = False
-
-
-MESES_EN_GR = {
-    "JAN": "01", "FEB": "02", "MAR": "03", "APR": "04", "MAY": "05", "JUN": "06",
-    "JUL": "07", "AUG": "08", "SEP": "09", "OCT": "10", "NOV": "11", "DEC": "12",
-}
-
-
-def _data_en_para_br_gr(data_str):
-    """Converte '30-APR-2029' para '30/04/2029'."""
-    m = re.match(r"(\d{1,2})-([A-Z]{3})-(\d{4})", data_str.upper())
-    if not m:
-        return data_str
-    dia, mes_abv, ano = m.groups()
-    mes = MESES_EN_GR.get(mes_abv)
-    return f"{dia.zfill(2)}/{mes}/{ano}" if mes else data_str
-
-
-def extrair_dados_packing_para_email(arquivo_pdf):
-    """Lê a Packing List via OCR e tenta extrair Delivery, Protocol, Order e
-    os itens (Descrição, Lote, Validade, Quantidade). Sempre devolve todas as
-    chaves, mesmo vazias, para a página nunca quebrar."""
-    resultado = {"delivery": "", "protocolo": "", "order": "", "itens": []}
-    if not OCR_DISPONIVEL:
-        return resultado
-
-    arquivo_pdf.seek(0)
-    pdf_bytes = arquivo_pdf.read()
-
-    try:
-        imagens = convert_from_bytes(pdf_bytes, dpi=300, first_page=1, last_page=1)
-        texto_pagina1 = pytesseract.image_to_string(imagens[0], lang="eng") if imagens else ""
-    except Exception:
-        return resultado
-
-    texto_completo = texto_pagina1
-
-    m_del = re.search(r"Delivery\s*number\D{0,5}(80\d{8})", texto_completo, re.IGNORECASE)
-    m_proto = re.search(r"Protocol\s*number\s*:?\s*([A-Z]{2}\d{3}-\d{4})", texto_completo, re.IGNORECASE)
-    m_order = re.search(r"Order\s*number\s*:?\s*(\d{6,9})", texto_completo, re.IGNORECASE)
-
-    if not (m_del and m_proto and m_order):
-        try:
-            imagens2 = convert_from_bytes(pdf_bytes, dpi=300, first_page=2, last_page=2)
-            if imagens2:
-                texto_pagina2 = pytesseract.image_to_string(imagens2[0], lang="eng")
-                texto_completo2 = texto_pagina1 + "\n" + texto_pagina2
-                m_del = m_del or re.search(r"Delivery\s*number\D{0,5}(80\d{8})", texto_completo2, re.IGNORECASE)
-                m_proto = m_proto or re.search(r"Protocol\s*number\s*:?\s*([A-Z]{2}\d{3}-\d{4})", texto_completo2, re.IGNORECASE)
-                m_order = m_order or re.search(r"Order\s*number\s*:?\s*(\d{6,9})", texto_completo2, re.IGNORECASE)
-        except Exception:
-            pass
-
-    resultado["delivery"] = m_del.group(1) if m_del else ""
-    resultado["protocolo"] = m_proto.group(1).upper() if m_proto else ""
-    resultado["order"] = m_order.group(1) if m_order else ""
-
-    protocolo_prefixo = resultado["protocolo"].split("-")[0] if resultado["protocolo"] else ""
-
-    linhas = [l.strip() for l in texto_pagina1.splitlines()]
-    padrao_item = re.compile(r"\b([A-Z]{2,4}\d{3,6})\s+(\d{1,4})\s*EA\s+(\d{1,2}-[A-Z]{3}-\d{4})\b", re.IGNORECASE)
-    itens = []
-    for i, linha in enumerate(linhas):
-        m_item = padrao_item.search(linha)
-        if not m_item:
-            continue
-        lote, quantidade, data_val = m_item.groups()
-        descricao = ""
-        for j in range(i + 1, min(i + 6, len(linhas))):
-            candidata = linhas[j].strip()
-            if not candidata:
-                continue
-            candidata_upper = candidata.upper()
-            candidata_sem_espaco = candidata_upper.replace(" ", "")
-            if candidata_upper.startswith("SERIAL") or candidata_upper.startswith("STORAGE"):
-                continue
-            if "TAGALERT" in candidata_sem_espaco or "FAGALERT" in candidata_sem_espaco:
-                continue
-            if protocolo_prefixo and protocolo_prefixo.upper() in candidata_upper:
-                descricao = candidata
-                break
-            if "OLMUL" in candidata_upper:
-                descricao = candidata
-                break
-        itens.append({
-            "descricao": descricao,
-            "lote": lote.upper(),
-            "validade": _data_en_para_br_gr(data_val),
-            "quantidade": quantidade,
-        })
-
-    resultado["itens"] = itens
-    return resultado
 
 
 def extrair_texto_pdf(leitor, separador=""):
-    """Extrai o texto de todas as páginas; ignora páginas sem texto."""
+    """Extrai o texto de todas as páginas; ignora páginas sem texto extraível."""
     return separador.join([(pagina.extract_text() or "") for pagina in leitor.pages])
-
-
-def remover_acentos(texto):
-    """Remove acentos para comparar textos de sistemas diferentes."""
-    return "".join(c for c in unicodedata.normalize("NFD", texto) if unicodedata.category(c) != "Mn")
 
 
 def detectar_faixas_tagalert(texto_upper):
     """Procura faixas 'TEMP 2-8 C' etc. associadas a TAGALERT. Limite superior
-    até 8°C = Refrigerado; acima = Ambiente."""
+    até 8°C = Refrigerado; acima disso = Ambiente."""
     tem_ref = False
     tem_amb = False
     for m in re.finditer(r"TEMP\s*-?\d+(?:[.,]\d+)?\s*-\s*(\d+(?:[.,]\d+)?)\s*C", texto_upper):
@@ -140,9 +33,8 @@ def detectar_faixas_tagalert(texto_upper):
 
 
 def detectar_faixas_newse(texto_upper):
-    """Igual à anterior, mas para a NEWSE ('2 A 8ºC', '15 A 25ºC'). Não depende
-    de 'TAGALERT' por perto. Sem \\b depois do 'C' porque a Quantidade às vezes
-    vem colada na temperatura (ex: '2 A 8ºC12')."""
+    """Igual à anterior, mas para a NEWSE ('2 A 8ºC', '15 A 25ºC'). Sem \\b depois
+    do 'C' porque a Quantidade às vezes vem colada na temperatura (ex: '2 A 8ºC12')."""
     tem_ref = False
     tem_amb = False
     for m in re.finditer(r"(\d+(?:[.,]\d+)?)\s*A\s*(\d+(?:[.,]\d+)?)\s*[°º]?C", texto_upper):
@@ -155,12 +47,8 @@ def detectar_faixas_newse(texto_upper):
 
 
 # --- Reconhecimento de medicações citotóxicas (agrupamento de loggers) ---
-# Lookahead negativo em PACLITAXEL para não confundir com PACLITAXEL NAB
-# (validado com documento real). A ficha de segurança é tratada à parte
-# em FICHAS_SEGURANCA.
+# Lookahead negativo em PACLITAXEL para não confundir com PACLITAXEL NAB.
 CITOTOXICOS_REGEX = re.compile(r"BORTEZOMIB|SPRYCEL|DASATINIB|PACLITAXEL(?!\s*NAB)|TAXOL|CYCLOPHOSPHAMIDE|CICLOFOSFAMIDA")
-# Muitas Packing Lists já trazem a palavra "Cytotoxic" no campo de Storage
-# (inclusive para Cisplatin, Pemetrexed, Carboplatin etc.).
 CITOTOXICO_TEXTO_REGEX = re.compile(r"CYTOTOXIC|CITOT[ÓO]XIC")
 
 # Linha "Quantidade EA Data" que aparece uma vez por item (ex: "8 EA 30-JUN-2027").
@@ -254,347 +142,30 @@ FICHAS_SEGURANCA = [
     (re.compile(r"CYCLOPHOSPHAMIDE|CICLOFOSFAMIDA"), "fichas_seguranca/ficha_ciclofosfamida.pdf", "Cyclophosphamide / Ciclofosfamida"),
 ]
 
-
-# ==========================================================================
-# CHECKLIST DE PARTICULARIDADES (NOVO PADRÃO DRS)
-# ==========================================================================
-# Linhas "fixas" (Observações CS e Anexos) ficam neste JSON, ao lado do
-# portal_bms.py (no Streamlit Cloud pode zerar se o app reiniciar).
-ARQUIVO_FIXAS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "particularidades_fixas.json")
-
-# Centros em que ORDENS COMPLEMENTARES = SIM (independente do TE)
-PALAVRAS_ORDEM_COMPLEMENTAR = ("CAMARGO", "ICESP", "PRUDENTE", "INSTITUTO DO CANCER")
-
-TITULO_MODELO = "MODELO DE PARTICULARIDADES – PADRÃO"
-
-OBS_CS_PACKING = [
-    "A SC deve ser emitida em nome da instituição;",
-    "A minuta deverá ser emitida no CNPJ do centro;",
-]
-
-ANEXOS_PACKING = ["Minutas", "Formulário de Remessa", "Packing list"]
-ANEXO_FICHA = "Ficha de segurança de produtos perigosos"
-
-OBS_WHS_CITOTOXICO = [
-    "Identificar o volume com a etiqueta UN3481 – para envio de equipamentos.",
-    "Etiquetar os volumes com etiqueta excepted quantities.",
-]
-
-OPCAO_VALIDADE_NAO = "NÃO"
-OPCAO_VALIDADE_SIM = "SIM"
-
-# st.fragment (Streamlit >= 1.37): só o checklist recarrega a cada clique.
-_fragment = (
-    getattr(st, "fragment", None)
-    or getattr(st, "experimental_fragment", None)
-    or (lambda f: f)
-)
+# --- Módulos do portal (arquivos na mesma pasta deste) ---
+from checklist_particularidades import renderizar_checklist_particularidades
+from checklist_brasil import renderizar_checklist_brasil, CATEGORIA_MEDICACAO, CATEGORIA_SUPRIMENTO
+from leitura_packing import extrair_dados_packing_para_email, OCR_DISPONIVEL
+from gerador_email import montar_html_gerador
 
 
-def centro_exige_ordem_complementar(texto_upper):
-    """True se o destino (bloco 'SHIP TO') é AC Camargo / ICESP / Antônio Prudente."""
-    texto = remover_acentos(texto_upper)
-    bloco = texto.split("SHIP TO")[-1] if "SHIP TO" in texto else texto
-    return any(p in bloco for p in PALAVRAS_ORDEM_COMPLEMENTAR)
-
-
-def montar_texto_embalagem(qtd_temptale, qtd_tag_amb, qtd_tag_ref):
-    """Texto do campo '( X ) OUTRO:' das EMBALAGENS, pela quantidade de loggers
-    que a Packing List pede. Um CREDO por logger (citotóxicos já entram como
-    logger/caixa extra na contagem)."""
-
-    def fmt(qtd, rotulo):
-        return rotulo if qtd == 1 else f"{qtd}x {rotulo}"
-
-    credos, loggers = [], []
-
-    credo_ambiente = qtd_tag_amb + qtd_temptale
-    if credo_ambiente:
-        credos.append(fmt(credo_ambiente, "CREDO AMBIENTE"))
-    if qtd_tag_ref:
-        credos.append(fmt(qtd_tag_ref, "CREDO REFRIGERADO"))
-
-    if qtd_tag_amb:
-        loggers.append(fmt(qtd_tag_amb, "TAG ALERT AMBIENTE"))
-    if qtd_tag_ref:
-        loggers.append(fmt(qtd_tag_ref, "TAG ALERT REFRIGERADO"))
-    if qtd_temptale:
-        loggers.append(fmt(qtd_temptale, "TEMPTALE AMBIENTE"))
-
-    if not credos:
-        return ""
-    return " E ".join(credos) + " + " + " E ".join(loggers)
-
-
-def carregar_linhas_fixas():
-    if "linhas_fixas" in st.session_state:
-        return st.session_state["linhas_fixas"]
-    dados = {secao: [] for secao in ("obs_cs", "anexos")}
-    try:
-        with open(ARQUIVO_FIXAS, "r", encoding="utf-8") as f:
-            lido = json.load(f)
-        for secao in dados:
-            dados[secao] = [str(x).strip() for x in lido.get(secao, []) if str(x).strip()]
-    except Exception:
-        pass
-    st.session_state["linhas_fixas"] = dados
-    return dados
-
-
-def salvar_linhas_fixas():
-    try:
-        with open(ARQUIVO_FIXAS, "w", encoding="utf-8") as f:
-            json.dump(st.session_state["linhas_fixas"], f, ensure_ascii=False, indent=2)
-        return True
-    except Exception:
-        return False
-
-
-def _hash_texto(texto):
-    return hashlib.md5(texto.encode("utf-8")).hexdigest()[:8]
-
-
-def _unicos(linhas):
-    vistos, saida = set(), []
-    for linha in linhas:
-        if linha not in vistos:
-            vistos.add(linha)
-            saida.append(linha)
-    return saida
-
-
-def _bloco_linhas_extras(secao, arquivo_id, rotulo_campo):
-    """Mostra as linhas fixas (marcadas por padrão), as extras desta Packing
-    List e o campo para adicionar nova linha (com opção de fixar).
-    Devolve a lista de linhas marcadas."""
-    fixas = carregar_linhas_fixas()[secao]
-    chave_extras = f"part_extras_{secao}_{arquivo_id}"
-    chave_cont = f"part_cont_{secao}_{arquivo_id}"
-    st.session_state.setdefault(chave_extras, [])
-    st.session_state.setdefault(chave_cont, 0)
-
-    selecionadas = []
-
-    for texto in list(fixas):
-        c1, c2 = st.columns([12, 1])
-        with c1:
-            if st.checkbox(f"📌 {texto}", value=True, key=f"part_fixa_{secao}_{_hash_texto(texto)}_{arquivo_id}"):
-                selecionadas.append(texto)
-        with c2:
-            if st.button("🗑️", key=f"part_fixa_del_{secao}_{_hash_texto(texto)}_{arquivo_id}",
-                         help="Remover das linhas fixas"):
-                fixas.remove(texto)
-                salvar_linhas_fixas()
-                st.rerun()
-
-    for texto in st.session_state[chave_extras]:
-        if st.checkbox(texto, value=True, key=f"part_extra_{secao}_{_hash_texto(texto)}_{arquivo_id}"):
-            selecionadas.append(texto)
-
-    cont = st.session_state[chave_cont]
-    novo = st.text_input(
-        rotulo_campo,
-        key=f"part_novo_{secao}_{cont}_{arquivo_id}",
-        placeholder="Digite uma informação adicional (opcional)",
-    )
-    fixar = st.checkbox(
-        "📌 Deixar esta linha como fixa (aparece em todas as próximas Packing Lists)",
-        key=f"part_fixar_{secao}_{cont}_{arquivo_id}",
-    )
-    if st.button("➕ Adicionar linha", key=f"part_add_{secao}_{arquivo_id}"):
-        texto_novo = (novo or "").strip()
-        if texto_novo:
-            if fixar:
-                if texto_novo not in fixas:
-                    fixas.append(texto_novo)
-                    if not salvar_linhas_fixas():
-                        st.warning("Não consegui gravar a linha fixa em arquivo — ela vale só nesta sessão.")
-            elif texto_novo not in st.session_state[chave_extras]:
-                st.session_state[chave_extras].append(texto_novo)
-            st.session_state[chave_cont] = cont + 1  # limpa o campo
-            st.rerun()
-
-    return selecionadas
-
-
-@_fragment
-def _checklist_particularidades(texto_upper, arquivo_id, qtd_temptale, qtd_tag_amb, qtd_tag_ref,
-                                tem_citotoxico_amplo):
-
-    def k(nome):
-        return f"part_{nome}_{arquivo_id}"
-
-    # CYTOTOXIC (para as particularidades) = só as medicações com ficha de segurança
-    citotoxicas = [rotulo for regex, _, rotulo in FICHAS_SEGURANCA if regex.search(texto_upper)]
-    eh_cito = bool(citotoxicas)
-
-    if eh_cito:
-        st.info("🧪 Medicação CYTOTOXIC identificada: " + ", ".join(citotoxicas))
-    elif tem_citotoxico_amplo:
-        st.caption(
-            "ℹ️ A Packing List traz item marcado como Cytotoxic que não está na lista das "
-            "medicações com ficha de segurança — não marquei como CYTOTOXIC. Ajuste abaixo se precisar."
-        )
-
-    # ---------------- CS ----------------
-    st.markdown("#### CS")
-    st.markdown("**ORDENS COMPLEMENTARES**")
-    exige_oc = centro_exige_ordem_complementar(texto_upper)
-    if exige_oc:
-        st.caption("Centro AC Camargo / ICESP / Antônio Prudente → SIM (independente do TE).")
-    escolha_oc = st.radio(
-        "Ordens complementares", ["SIM", "NÃO", "N/A"],
-        index=0 if exige_oc else 1, horizontal=True,
-        key=k("oc"), label_visibility="collapsed",
-    )
-    tn_oc = ""
-    if escolha_oc == "SIM":
-        tn_oc = st.text_input("TN:", key=k("oc_tn"), placeholder="Preencha o número do TN").strip()
-        if not tn_oc:
-            st.warning("⚠️ TN em branco.")
-
-    st.markdown("**OBSERVAÇÕES CS**")
-    st.caption("Incluídas automaticamente (via Packing List):")
-    for linha in OBS_CS_PACKING:
-        st.markdown(f"- {linha}")
-    obs_cs_extras = _bloco_linhas_extras("obs_cs", arquivo_id, "Nova observação CS:")
-
-    # ---------------- OPERAÇÃO WHS ----------------
-    st.markdown("#### OPERAÇÃO WHS")
-    st.markdown("**EMBALAGENS**")
-    sugerido = montar_texto_embalagem(qtd_temptale, qtd_tag_amb, qtd_tag_ref)
-    if not sugerido:
-        st.warning("⚠️ Não identifiquei TAG ALERT / TEMPTALE nesta Packing List — preencha o texto manualmente.")
-    st.caption("Packing List → sempre ( X ) OUTRO. Texto calculado pela quantidade de TAG ALERT / TEMPTALE (pode editar):")
-    texto_embalagem = st.text_input("OUTRO:", value=sugerido, key=k("emb")).strip()
-
-    st.markdown("**ETIQUETAGEM**")
-    st.caption("( X ) N/A — fixo para Packing List")
-
-    st.markdown("**ENVIO DE EQUIPAMENTOS**")
-    st.caption("( X ) N/A — fixo para Packing List")
-
-    st.markdown("**ENVIO DE PRODUTOS PERIGOSOS**")
-    perigoso = st.radio(
-        "Produtos perigosos", ["SIM", "N/A"],
-        index=0 if eh_cito else 1, horizontal=True,
-        key=k("per"), label_visibility="collapsed",
-    )
-    ficha_perigoso = False
-    if perigoso == "SIM":
-        ficha_perigoso = st.checkbox("FICHA DE SEGURANÇA", value=True, key=k("per_ficha"))
-
-    st.markdown("**ESTÁ AUTORIZADO O ENVIO DE PRODUTOS COM VALIDADE INFERIOR A 3 MESES?**")
-    validade = st.radio(
-        "Validade inferior a 3 meses", [OPCAO_VALIDADE_NAO, OPCAO_VALIDADE_SIM],
-        index=None, key=k("val"), label_visibility="collapsed",
-    )
-    if validade is None:
-        st.warning("⚠️ Marque NÃO ou SIM.")
-
-    st.markdown("**ANEXOS OBRIGATÓRIOS NO ENVIO**")
-    anexos = []
-    for rotulo in ANEXOS_PACKING:
-        if st.checkbox(rotulo, value=True, key=k(f"anx_{_hash_texto(rotulo)}")):
-            anexos.append(rotulo)
-    if st.checkbox(ANEXO_FICHA, value=eh_cito, key=k("anx_ficha")):
-        anexos.append(ANEXO_FICHA)
-    anexos_extras = _bloco_linhas_extras("anexos", arquivo_id, "Novo anexo obrigatório:")
-
-    st.markdown("**OBSERVAÇÕES WHS**")
-    obs_whs = []
-    for texto in OBS_WHS_CITOTOXICO:
-        if st.checkbox(texto, value=eh_cito, key=k(f"whs_{_hash_texto(texto)}")):
-            obs_whs.append(texto)
-
-    st.markdown("**FISCAL**")
-    st.caption("Sem particularidades fiscais.")
-
-    # ---------------- Documento final ----------------
-    linhas = [TITULO_MODELO, "", "CS:", "", "- ORDENS COMPLEMENTARES:"]
-    if escolha_oc == "SIM":
-        linhas.append(f"( X ) SIM - TN: {tn_oc}".rstrip())
-    else:
-        linhas.append(f"( X ) {escolha_oc}")
-
-    linhas += ["", "OBSERVAÇÕES CS:"]
-    linhas += _unicos(OBS_CS_PACKING + obs_cs_extras)
-
-    linhas += ["", "OPERAÇÃO WHS:", "", "- EMBALAGENS:"]
-    linhas.append(f"( X ) OUTRO: {texto_embalagem}".rstrip())
-
-    linhas += ["", "- ETIQUETAGEM:", "( X ) N/A"]
-    linhas += ["", "- ENVIO DE EQUIPAMENTOS:", "( X ) N/A"]
-
-    linhas += ["", "- ENVIO DE PRODUTOS PERIGOSOS:"]
-    if perigoso == "SIM":
-        linhas.append("( X ) SIM - ( X ) FICHA DE SEGURANÇA" if ficha_perigoso else "( X ) SIM")
-    else:
-        linhas.append("( X ) N/A")
-
-    linhas += ["", "- ESTÁ AUTORIZADO O ENVIO DE PRODUTOS COM VALIDADE INFERIOR A 3 MESES?"]
-    if validade is None:
-        linhas += [f"( ) {OPCAO_VALIDADE_NAO}", f"( ) {OPCAO_VALIDADE_SIM}"]
-    else:
-        linhas.append(f"( X ) {validade}")
-
-    linhas += ["", "- ANEXOS OBRIGATÓRIOS NO ENVIO:"]
-    linhas += [f"( X ) {a}" for a in _unicos(anexos + anexos_extras)]
-
-    linhas += ["", "OBSERVAÇÕES WHS:"]
-    linhas += obs_whs
-
-    linhas += ["", "- FISCAL:"]
-
-    texto_final = "\n".join(linhas)
-
-    st.markdown("#### 📄 Particularidades geradas")
-    st.code(texto_final, language="text")
-
-    texto_js = json.dumps(texto_final, ensure_ascii=False).replace("</", "<\\/")
-    components.html(
-        f"""
-        <button id="copiar" style="background:#e59235; color:white; font-size:13px; font-weight:bold;
-            padding:8px; border:none; border-radius:4px; width:100%; cursor:pointer;">
-            📋 Copiar Particularidades
-        </button>
-        <script>
-          const texto = {texto_js};
-          const botao = document.getElementById('copiar');
-          botao.addEventListener('click', () => {{
-            navigator.clipboard.writeText(texto);
-            botao.innerText = '📋 Texto Copiado!';
-          }});
-        </script>
-        """,
-        height=45,
-    )
-
-
-def renderizar_checklist_particularidades(texto_upper, arquivo_id, qtd_temptale,
-                                          qtd_tagalert_amb, qtd_tagalert_ref, tem_citotoxico):
-    _checklist_particularidades(texto_upper, arquivo_id, qtd_temptale,
-                                qtd_tagalert_amb, qtd_tagalert_ref, tem_citotoxico)
-
-from particularidades import renderizar_checklist_particularidades
-from checklist_brasil import renderizar_checklist_brasil
-from leitura_packing import extrair_dados_packing_para_email
-# --- CONFIGURAÇÕES DA PÁGINA (SaaS Logístico - Wide) ---
+# --- CONFIGURAÇÕES DA PÁGINA ---
 st.set_page_config(page_title="DRS Group | BMS Operations", layout="wide", page_icon="🏢")
 
-# --- INJEÇÃO DE CSS (Identidade Visual DRS Group) ---
+# --- TEMA: PRETO, CINZA E LARANJA ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
     :root {
-        --drs-verde-escuro: #12302c;
-        --drs-verde: #1b3834;
-        --drs-teal: #209b7c;
-        --drs-laranja: #e59235;
-        --drs-fundo: #eef3f2;
-        --drs-borda: #dde6e3;
-        --drs-texto-2: #64748b;
+        --drs-preto: #141414;
+        --drs-grafite: #232323;
+        --drs-cinza: #6b7280;
+        --drs-cinza-claro: #9ca3af;
+        --drs-laranja: #f28c1b;
+        --drs-laranja-escuro: #d97706;
+        --drs-fundo: #f3f4f6;
+        --drs-borda: #e2e4e8;
     }
 
     html, body, [class*="css"], .stApp {
@@ -602,53 +173,53 @@ st.markdown("""
     }
 
     .stApp {
-        background: radial-gradient(circle at top left, #f6faf9 0%, var(--drs-fundo) 55%);
+        background: radial-gradient(circle at top left, #ffffff 0%, var(--drs-fundo) 55%);
     }
 
     header[data-testid="stHeader"] { background: rgba(0,0,0,0); }
 
     h1, h2, h3, h4, h5, h6 {
-        color: var(--drs-verde) !important;
+        color: var(--drs-preto) !important;
         font-weight: 700;
         margin-bottom: 0.3rem;
     }
     h2 { font-size: 19px !important; letter-spacing: -0.2px; }
-    h3 { font-size: 13px !important; text-transform: uppercase; letter-spacing: 0.6px; color: var(--drs-texto-2) !important; font-weight: 700 !important; }
+    h3 { font-size: 13px !important; text-transform: uppercase; letter-spacing: 0.6px; color: var(--drs-cinza) !important; font-weight: 700 !important; }
     h4 { font-size: 12px !important; }
 
-    /* Botões padrão (fora da sidebar) */
+    /* Botões */
     .stButton>button {
-        background-color: var(--drs-teal) !important;
-        color: white !important;
+        background-color: var(--drs-laranja) !important;
+        color: #111111 !important;
         border-radius: 7px;
-        border: 1px solid var(--drs-teal) !important;
+        border: 1px solid var(--drs-laranja) !important;
         font-size: 13px !important;
-        font-weight: 600;
+        font-weight: 700;
         padding: 0.45rem 1rem;
         transition: 0.15s ease-in-out;
-        box-shadow: 0 1px 4px rgba(18,48,44,0.18);
+        box-shadow: 0 1px 4px rgba(0,0,0,0.18);
     }
     .stButton>button:hover {
-        background-color: var(--drs-verde-escuro) !important;
-        border-color: var(--drs-verde-escuro) !important;
+        background-color: var(--drs-preto) !important;
+        border-color: var(--drs-preto) !important;
         color: var(--drs-laranja) !important;
     }
     .stButton>button:disabled {
-        background-color: #e8ecec !important;
-        border-color: #e0e6ed !important;
-        color: #a3adae !important;
+        background-color: #e5e7eb !important;
+        border-color: #e5e7eb !important;
+        color: #9ca3af !important;
         box-shadow: none !important;
     }
 
-    /* Sidebar */
+    /* Barra lateral (preta) */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #ffffff 0%, #f6faf9 100%);
-        border-right: 1px solid var(--drs-borda);
+        background: linear-gradient(180deg, #0f0f10 0%, #1c1c1e 100%);
+        border-right: 1px solid #2a2a2a;
         padding-top: 1rem;
     }
     [data-testid="stSidebar"] .stButton>button {
         background: transparent !important;
-        color: var(--drs-verde) !important;
+        color: #d1d5db !important;
         border: 1px solid transparent !important;
         box-shadow: none !important;
         text-align: left !important;
@@ -657,39 +228,58 @@ st.markdown("""
         width: 100%;
     }
     [data-testid="stSidebar"] .stButton>button:hover {
-        background: #e7f5f0 !important;
-        color: var(--drs-teal) !important;
+        background: #262626 !important;
+        color: var(--drs-laranja) !important;
     }
     [data-testid="stSidebar"] .stButton>button[kind="primary"],
     [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] {
-        background: var(--drs-verde) !important;
-        color: #ffffff !important;
-        border: 1px solid var(--drs-verde) !important;
-        box-shadow: 0 2px 6px rgba(27,56,52,0.28) !important;
+        background: var(--drs-laranja) !important;
+        color: #111111 !important;
+        border: 1px solid var(--drs-laranja) !important;
+        box-shadow: 0 2px 8px rgba(242,140,27,0.35) !important;
     }
     [data-testid="stSidebar"] .stButton>button[kind="primary"]:hover,
     [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"]:hover {
-        color: var(--drs-laranja) !important;
+        background: var(--drs-laranja-escuro) !important;
+        color: #111111 !important;
     }
+    [data-testid="stSidebar"] [data-testid="stCaptionContainer"] { color: #9ca3af !important; }
 
     /* Cartões / blocos aninhados */
     div[data-testid="stVerticalBlock"] div[data-testid="stVerticalBlock"] {
         background-color: #ffffff;
         padding: 12px;
         border-radius: 10px;
-        box-shadow: 0 2px 10px rgba(18,48,44,0.06);
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
         border: 1px solid var(--drs-borda);
+    }
+    [data-testid="stSidebar"] div[data-testid="stVerticalBlock"] div[data-testid="stVerticalBlock"] {
+        background-color: transparent;
+        padding: 0;
+        border: none;
+        box-shadow: none;
     }
 
     [data-testid="stFileUploaderDropzone"] {
         border-radius: 10px !important;
-        border: 1.5px dashed #b7c9c4 !important;
-        background-color: #fafcfb !important;
+        border: 1.5px dashed #9ca3af !important;
+        background-color: #fafafa !important;
     }
 
-    .dataframe { font-size: 12px !important; }
+    /* Faixa de título de cada página */
+    .drs-banner {
+        background: linear-gradient(135deg, #141414 0%, #2b2b2b 100%);
+        padding: 20px 26px;
+        border-radius: 12px;
+        border-left: 6px solid var(--drs-laranja);
+        margin-bottom: 20px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.18);
+    }
+    .drs-banner h2 { color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px !important; }
+    .drs-banner p { color: #d1d5db; margin: 0; font-size: 13px; line-height: 1.4; }
+    .drs-banner b { color: var(--drs-laranja); }
 
-    /* Aviso fixo de pendência (não deixa passar despercebido) */
+    /* Aviso fixo de pendência */
     .drs-alerta-pendente {
         position: sticky;
         top: 0.5rem;
@@ -702,10 +292,20 @@ st.markdown("""
         font-size: 13px;
         font-weight: 600;
         margin-bottom: 16px;
-        box-shadow: 0 2px 8px rgba(229,146,53,0.18);
+        box-shadow: 0 2px 8px rgba(242,140,27,0.18);
     }
     </style>
 """, unsafe_allow_html=True)
+
+
+def banner(titulo, descricao):
+    st.markdown(f"""
+        <div class="drs-banner">
+            <h2>{titulo}</h2>
+            <p>{descricao}</p>
+        </div>
+    """, unsafe_allow_html=True)
+
 
 # --- SISTEMA DE AUTENTICAÇÃO ---
 SENHA_ACESSO = st.secrets.get("SENHA_ACESSO")
@@ -720,43 +320,42 @@ if not SENHA_ACESSO:
 
 
 def tela_login(mostrar_erro):
-    """Tela de login (fundo em degradê DRS + cartão central). Tudo dentro de um
-    único st.container() para o cartão envolver o campo de senha."""
+    """Tela de login: fundo preto + cartão central com logo e campo de senha."""
     st.markdown("""
         <style>
-        .stApp { background: linear-gradient(160deg, #10281f 0%, #1b3834 45%, #12302c 100%) !important; }
+        .stApp { background: linear-gradient(160deg, #0b0b0c 0%, #1c1c1e 55%, #141414 100%) !important; }
         [data-testid="stSidebar"] { display: none !important; }
         header[data-testid="stHeader"] { background: rgba(0,0,0,0) !important; }
 
         .drs-login-topo {
             height: 6px; margin: -12px -12px 22px -12px;
-            background: linear-gradient(90deg, var(--drs-teal), var(--drs-laranja));
+            background: linear-gradient(90deg, #f28c1b, #d97706);
             border-radius: 10px 10px 0 0;
         }
         .drs-login-badge {
             width: 56px; height: 56px; margin: 0 auto 16px auto;
             border-radius: 14px;
-            background: linear-gradient(135deg, var(--drs-verde) 0%, var(--drs-verde-escuro) 100%);
+            background: linear-gradient(135deg, #f28c1b 0%, #d97706 100%);
             display: flex; align-items: center; justify-content: center;
-            font-family: 'Inter', sans-serif; font-weight: 800; font-size: 18px; color: #ffffff;
+            font-family: 'Inter', sans-serif; font-weight: 800; font-size: 18px; color: #111111;
             letter-spacing: 0.5px;
-            box-shadow: 0 8px 20px rgba(18,48,44,0.35);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.35);
         }
         .drs-login-title {
             text-align: center; font-family: 'Inter', sans-serif; font-weight: 800 !important;
-            font-size: 22px !important; color: var(--drs-verde) !important;
+            font-size: 22px !important; color: #141414 !important;
             letter-spacing: 0.4px; margin: 0 !important;
         }
         .drs-login-subtitle {
             text-align: center; font-family: 'Inter', sans-serif; font-weight: 700; font-size: 12px;
-            color: var(--drs-laranja); text-transform: uppercase; letter-spacing: 1.2px;
+            color: #f28c1b; text-transform: uppercase; letter-spacing: 1.2px;
             margin: 6px 0 18px 0;
         }
         .drs-login-desc {
-            text-align: center; font-size: 13px; color: var(--drs-texto-2); line-height: 1.5; margin-bottom: 6px;
+            text-align: center; font-size: 13px; color: #6b7280; line-height: 1.5; margin-bottom: 6px;
         }
         .drs-login-footer {
-            font-size: 11px; color: #a9b3b1; text-align: center; margin-top: 16px;
+            font-size: 11px; color: #9ca3af; text-align: center; margin-top: 16px;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -771,7 +370,7 @@ def tela_login(mostrar_erro):
                     <p class="drs-login-title">DRS GROUP</p>
                     <p class="drs-login-subtitle">🧬 Célula 03 · BMS Operations</p>
                     <p class="drs-login-desc">Painel interno de automação de Packing List, controle de<br>
-                    estoque e conferência documental.<br>Acesso restrito à equipe autorizada.</p>
+                    estoque e geração de e-mails.<br>Acesso restrito à equipe autorizada.</p>
                 </div>
             """, unsafe_allow_html=True)
             st.text_input(
@@ -856,33 +455,33 @@ def carregar_dados_sheets():
             df_tes = df_tes.iloc[:, [0, 1]]
             df_tes.columns = ['Estudo', 'TE']
     except: df_tes = None
-        
+
     return df_est, df_tes
 
 df_estoque, df_te = carregar_dados_sheets()
 
-# --- LÓGICA DE NAVEGAÇÃO DE PÁGINAS ---
-if "pagina_atual" not in st.session_state:
+# --- NAVEGAÇÃO ---
+if "pagina_atual" not in st.session_state or st.session_state.pagina_atual not in ("automacao", "bms_brasil", "email"):
     st.session_state.pagina_atual = "automacao"
 
-# --- BARRA LATERAL (SIDEBAR) ---
+# --- BARRA LATERAL ---
 with st.sidebar:
     st.markdown("""
-        <div style='text-align: left; padding: 4px 0 10px 0; border-bottom: 1px solid #dde6e3; margin-bottom: 14px;'>
-            <h1 style='color: #1b3834; font-size: 32px; line-height: 0.9; margin: 0; font-family: "Inter", Arial, sans-serif; font-weight: 800; letter-spacing: -1px;'>DRS <span style="color:#209b7c;">GROUP</span></h1>
-            <p style="margin: 4px 0 0 0; font-size: 10px; color: #94a3ab; font-weight: 700; letter-spacing: 1.5px;">BMS OPERATIONS</p>
+        <div style='text-align: left; padding: 4px 0 10px 0; border-bottom: 1px solid #2f2f2f; margin-bottom: 14px;'>
+            <h1 style='color: #ffffff !important; font-size: 32px; line-height: 0.9; margin: 0; font-family: "Inter", Arial, sans-serif; font-weight: 800; letter-spacing: -1px;'>DRS <span style="color:#f28c1b;">GROUP</span></h1>
+            <p style="margin: 4px 0 0 0; font-size: 10px; color: #9ca3af; font-weight: 700; letter-spacing: 1.5px;">BMS OPERATIONS</p>
         </div>
     """, unsafe_allow_html=True)
 
     st.markdown("""
         <div style="display: flex; align-items: center; margin-bottom: 2px;">
-            <div style="width: 8px; height: 8px; border-radius: 50%; background-color: #28a745; margin-right: 6px; box-shadow: 0 0 4px #28a745;"></div>
-            <h3 style="margin: 0; font-size: 11px; color: #1b3834;">Painel de Operações</h3>
+            <div style="width: 8px; height: 8px; border-radius: 50%; background-color: #f28c1b; margin-right: 6px; box-shadow: 0 0 6px #f28c1b;"></div>
+            <h3 style="margin: 0; font-size: 11px; color: #e5e7eb !important;">Painel de Operações</h3>
         </div>
-        <p style="font-size: 10px; color: #28a745; margin-top: 0px; margin-left: 14px; font-weight: bold; margin-bottom: 14px;">Sistema Apto para Uso</p>
+        <p style="font-size: 10px; color: #f28c1b; margin-top: 0px; margin-left: 14px; font-weight: bold; margin-bottom: 14px;">Sistema Apto para Uso</p>
     """, unsafe_allow_html=True)
 
-    st.markdown("<p style='font-size: 10px; color: #94a3ab; font-weight: 700; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.6px;'>Navegação</p>", unsafe_allow_html=True)
+    st.markdown("<p style='font-size: 10px; color: #9ca3af; font-weight: 700; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.6px;'>Navegação</p>", unsafe_allow_html=True)
 
     bloqueado = st.session_state.alocacao_pendente
     paginas_menu = [
@@ -912,36 +511,44 @@ with st.sidebar:
     raw_ta_ref = len(df_estoque[df_estoque['Descricao_Clean'].str.contains("TAGALERT 2-8", na=False)]) if df_estoque is not None else 0
 
     st.markdown(f"""
-        <div style="font-size: 11px; color: #4a5568; margin-top: 5px; margin-bottom: 5px; line-height: 1.6; background-color: #ffffff; padding: 12px 14px; border-radius: 10px; border: 1px solid #dde6e3; border-left: 4px solid #e59235; box-shadow: 0 2px 8px rgba(18,48,44,0.05);">
-            <b style="font-size: 10px; color: #1b3834; letter-spacing: 0.4px;">LOGGERS DISPONÍVEIS</b><br>
-            <div style="display:flex; justify-content:space-between; margin-top:6px;"><span>Tag Alert Ambiente</span><b style="color: #209b7c;">{raw_ta_amb}</b></div>
-            <div style="display:flex; justify-content:space-between;"><span>Tag Alert Refrigerado</span><b style="color: #209b7c;">{raw_ta_ref}</b></div>
-            <div style="display:flex; justify-content:space-between;"><span>TempTale Ambiente</span><b style="color: #209b7c;">{raw_tt}</b></div>
+        <div style="font-size: 11px; color: #d1d5db; margin-top: 5px; margin-bottom: 5px; line-height: 1.6; background-color: #1f1f21; padding: 12px 14px; border-radius: 10px; border: 1px solid #2f2f2f; border-left: 4px solid #f28c1b;">
+            <b style="font-size: 10px; color: #ffffff; letter-spacing: 0.4px;">LOGGERS DISPONÍVEIS</b><br>
+            <div style="display:flex; justify-content:space-between; margin-top:6px;"><span>Tag Alert Ambiente</span><b style="color: #f28c1b;">{raw_ta_amb}</b></div>
+            <div style="display:flex; justify-content:space-between;"><span>Tag Alert Refrigerado</span><b style="color: #f28c1b;">{raw_ta_ref}</b></div>
+            <div style="display:flex; justify-content:space-between;"><span>TempTale Ambiente</span><b style="color: #f28c1b;">{raw_tt}</b></div>
         </div>
     """, unsafe_allow_html=True)
+
 
 def card_metrica(titulo, valor):
     return f"""
-    <div style="background-color: #ffffff; padding: 14px 16px; border-radius: 10px; border: 1px solid #dde6e3; border-top: 3px solid #209b7c; box-shadow: 0 2px 8px rgba(18,48,44,0.05);">
-        <p style="margin: 0; font-size: 10px; color: #94a3ab; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">{titulo}</p>
-        <p style="margin: 5px 0 0 0; font-size: 17px; color: #1b3834; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{valor}">{valor}</p>
+    <div style="background-color: #ffffff; padding: 14px 16px; border-radius: 10px; border: 1px solid #e2e4e8; border-top: 3px solid #f28c1b; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+        <p style="margin: 0; font-size: 10px; color: #9ca3af; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">{titulo}</p>
+        <p style="margin: 5px 0 0 0; font-size: 17px; color: #141414; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{valor}">{valor}</p>
     </div>
     """
 
+
+def linha_copia(rotulo, valor, altura=45):
+    """Linha 'ROTULO: valor [Copiar]' (mesmo visual na Automação e na BMS Brasil)."""
+    html = f"""<div style="display:flex; justify-content:space-between; align-items: center; padding:6px 12px; background:#f9fafb; border:1px solid #e5e7eb; border-radius:4px; margin-bottom:5px;">
+    <div><span style="color:#4b5563; font-weight:bold; font-size:11px;">{rotulo}:</span> <span style="font-family:monospace; color:#d97706; font-size:13px; font-weight:bold; margin-left:5px;">{valor}</span></div>
+    <button onclick="navigator.clipboard.writeText('{valor}'); this.innerText='Copiado!'; setTimeout(()=>this.innerText='Copiar', 2000)" style="background:#f28c1b; color:#111111; border:none; border-radius:3px; cursor:pointer; font-size:11px; padding:4px 10px; font-weight:bold;">Copiar</button></div>"""
+    components.html(html, height=altura)
+
+
 # ==========================================
-# ROTEADOR DE PÁGINAS 
+# PÁGINA: AUTOMAÇÃO DE PACKING LIST
 # ==========================================
 
 if st.session_state.pagina_atual == "automacao":
-    
-    st.markdown("""
-        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">📦 Automação de Packing List (SLA e Estoque)</h2>
-            <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
-                Faça o upload do <b>Packing List (PDF)</b> para extração imediata de dados. O sistema realiza a sugestão automática de <b>ativos logísticos</b>,<br> cálculo exato do <b>SLA de entrega</b> (considerando dias úteis) e a <b>baixa de estoque ao vivo na planilha</b>.
-            </p>
-        </div>
-    """, unsafe_allow_html=True)
+
+    banner(
+        "📦 Automação de Packing List (SLA e Estoque)",
+        "Faça o upload do <b>Packing List (PDF)</b> para extração imediata de dados. O sistema realiza a sugestão automática de "
+        "<b>ativos logísticos</b>, cálculo exato do <b>SLA de entrega</b> (considerando dias úteis) e a "
+        "<b>baixa de estoque ao vivo na planilha</b>.",
+    )
 
     FERIADOS = [datetime(2026, 9, 7).date()]
     def is_dia_util(data): return data.weekday() < 5 and data not in FERIADOS
@@ -967,8 +574,7 @@ if st.session_state.pagina_atual == "automacao":
     with col_data: data_recebimento = st.date_input("Data de Recebimento", datetime.today())
 
     if arquivo_pdf is None:
-        # Sem PDF: nada foi retirado do estoque, então a navegação não precisa
-        # ficar travada (permite cancelar removendo o arquivo).
+        # Sem PDF: nada foi retirado do estoque, então a navegação não precisa ficar travada.
         st.session_state.alocacao_pendente = False
 
     if arquivo_pdf is not None:
@@ -1020,12 +626,12 @@ if st.session_state.pagina_atual == "automacao":
         is_capital = "SÃO PAULO (CAPITAL)" in cidade_destino and not any(exc in cidade_destino for exc in ["JAÚ", "RIO PRETO", "RIBEIRÃO", "CAMPOS"])
 
         st.success("✅ Documento processado com sucesso.")
-        
+
         c1, c2, c3 = st.columns(3)
         with c1: st.markdown(card_metrica("Destino", cidade_destino), unsafe_allow_html=True)
         with c2: st.markdown(card_metrica("Protocolo / Estudo", estudo_encontrado), unsafe_allow_html=True)
         with c3: st.markdown(card_metrica("TE Correspondente", te_resultado), unsafe_allow_html=True)
-        st.write("") 
+        st.write("")
 
         st.markdown("### 📦 Separação e Baixa de Estoque")
 
@@ -1068,8 +674,7 @@ if st.session_state.pagina_atual == "automacao":
                     else:
                         st.warning(f"⚠️ **{label}**: Sem saldo disponível no estoque!")
 
-                # Aloca exatamente a quantidade de cada logger que os itens realmente
-                # precisam (citotóxicos já entram como grupos separados).
+                # Aloca exatamente a quantidade de cada logger que os itens realmente precisam.
                 for i in range(qtd_temptale):
                     rotulo = "TempTale Ambiente" if qtd_temptale == 1 else f"TempTale Ambiente ({i + 1}/{qtd_temptale})"
                     allocate_logger("TEMPTALE", rotulo)
@@ -1209,16 +814,14 @@ if st.session_state.pagina_atual == "automacao":
         val_palete = " | ".join([p["palete"] for p in ids_utilizados]) or "N/A"
         val_id = " | ".join([p["id_est"] for p in ids_utilizados]) or "N/A"
         val_te = te_resultado
-        
-        def btn_copia(rotulo, valor, uid):
-            html = f"""<div style="display:flex; justify-content:space-between; align-items: center; padding:6px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; margin-bottom:5px;">
-            <div><span style="color:#475569; font-weight:bold; font-size:11px;">{rotulo}:</span> <span style="font-family:monospace; color:#209b7c; font-size:13px; font-weight:bold; margin-left:5px;">{valor}</span></div>
-            <button onclick="navigator.clipboard.writeText('{valor}'); this.innerText='Copiado!'; setTimeout(()=>this.innerText='Copiar', 2000)" style="background:#209b7c; color:white; border:none; border-radius:3px; cursor:pointer; font-size:11px; padding:4px 10px; font-weight:bold;">Copiar</button></div>"""
-            components.html(html, height=45)
-            
+
         c_esq, c_dir = st.columns(2)
-        with c_esq: btn_copia("DEPOSITANTE", val_depositante, "d"); btn_copia("PALETE", val_palete, "p")
-        with c_dir: btn_copia("ID ITEM", val_id, "i"); btn_copia("TE DO ESTUDO", val_te, "t")
+        with c_esq:
+            linha_copia("DEPOSITANTE", val_depositante)
+            linha_copia("PALETE", val_palete)
+        with c_dir:
+            linha_copia("ID ITEM", val_id)
+            linha_copia("TE DO ESTUDO", val_te)
 
         # --- CHECKLIST DE PARTICULARIDADES (NOVO PADRÃO) ---
         st.markdown("### ✅ Checklist de Particularidades (novo padrão)")
@@ -1230,7 +833,7 @@ if st.session_state.pagina_atual == "automacao":
         st.markdown("### ⏱️ SLA e Prazos Operacionais")
         prazo_maximo = somar_dias_uteis(data_recebimento, 7)
         data_limite_doc = somar_dias_uteis(data_recebimento, 2)
-        
+
         if tem_tagalert_ref and not is_capital:
             data_entrega = somar_dias_uteis(data_limite_doc, 2)
             st.warning(f"🚨 **ALERTA REFRIGERADO (FLY):** Validade 96h ativada. Entrega sugerida: {data_entrega.strftime('%d/%m/%Y')}")
@@ -1238,812 +841,16 @@ if st.session_state.pagina_atual == "automacao":
             st.info(f"✅ **FLUXO PADRÃO.** Prazo DOC: {data_limite_doc.strftime('%d/%m/%Y')} | Limite Final: {prazo_maximo.strftime('%d/%m/%Y')}")
 
 # ==========================================
-# PÁGINA 3: CRUZAMENTO SOLICITAÇÃO x PACKING (ASSISTENTE DE CONFERÊNCIA)
-# ==========================================
-elif st.session_state.pagina_atual == "cruzamento":
-    
-    st.markdown("""
-        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">⚖️ Assistente de Conferência - Validação de Remessa</h2>
-            <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
-                Aja como a 'Assistente de Conferência'. Analise o texto do Shipment e da Solicitação fornecidos.<br>
-                Compare estritamente os campos e bloqueie remessas com divergências.
-            </p>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    if "file_uploader_key" not in st.session_state:
-        st.session_state.file_uploader_key = 0
-
-    col_btn_limpar, col_vazio = st.columns([1, 4])
-    with col_btn_limpar:
-        if st.button("🗑️ Limpar Arquivos", use_container_width=True):
-            st.session_state.file_uploader_key += 1
-            st.rerun()
-
-    col1, col2 = st.columns(2)
-    with col1:
-        arquivo_sol = st.file_uploader("Upload da Solicitação (PDF)", type=["pdf"], key=f"sol_{st.session_state.file_uploader_key}")
-    with col2:
-        arquivo_packing = st.file_uploader("Upload da Packing List / Shipment (PDF)", type=["pdf"], key=f"pack_{st.session_state.file_uploader_key}")
-
-    if arquivo_sol and arquivo_packing:
-        st.divider()
-        if st.button("Executar Conferência Estritamente", use_container_width=True):
-            with st.spinner("Processando documentos e auditando campos..."):
-                try:
-                    leitor_sol = PdfReader(arquivo_sol)
-                    texto_sol = extrair_texto_pdf(leitor_sol, " ")
-                    # Sem acentos: NEWSE e Packing List nem sempre extraem a
-                    # acentuação da mesma forma ("FUNDAÇÃO" vs "FUNDACAO").
-                    texto_sol_upper = remover_acentos(texto_sol.upper())
-                    texto_sol_limpo = re.sub(r'\s+', ' ', texto_sol)
-
-                    leitor_packing = PdfReader(arquivo_packing)
-                    texto_packing = extrair_texto_pdf(leitor_packing, " ")
-                    texto_packing_upper = remover_acentos(texto_packing.upper())
-                    texto_packing_limpo = re.sub(r'\s+', ' ', texto_packing)
-
-                    def limpar(t): return re.sub(r'\s+', ' ', str(t)).strip()
-
-                    # --- Grupos de instituições conhecidas (campo Centre/Depto) ---
-                    # Se nenhum grupo bater mas o CEP dos dois documentos for
-                    # idêntico, o CEP confirma o centro (ver mais abaixo).
-                    GRUPOS_CENTRO = [
-                        ("A. C. CAMARGO / FUNDAÇÃO ANTÔNIO PRUDENTE", ["CAMARGO", "PRUDENTE"]),
-                        ("FUNDACAO PIO XII", ["PIO XII"]),
-                        ("HOSPITAL SAO LUCAS DA PUCRS", ["SAO LUCAS"]),
-                        ("ICESP", ["ICESP", "INSTITUTO DO CANCER"]),
-                        ("HOSPITAL MOINHOS DE VENTO", ["MOINHOS DE VENTO"]),
-                    ]
-
-                    def identificar_centro(texto):
-                        for nome_grupo, palavras in GRUPOS_CENTRO:
-                            if any(p in texto for p in palavras):
-                                return nome_grupo
-                        return "NÃO CONSTA"
-
-                    # --- EXTRAÇÃO DOCUMENTO FONTE (SOLICITAÇÃO / NEWSE) ---
-                    s_prot_match = re.search(r"(CA\d+-\d+)", texto_sol_upper)
-                    s_prot = s_prot_match.group(1) if s_prot_match else "NÃO CONSTA"
-
-                    # Na NEWSE, "Número da ordem" é onde o Delivery da BMS é registrado.
-                    s_ship_match = re.search(r"(?:NUMERO DA ORDEM|ORDEM|ORDER|SHIPMENT)[^\d]*(\d{8,12})", texto_sol_upper)
-                    s_ship = s_ship_match.group(1) if s_ship_match else (re.search(r"\b(8\d{9})\b", texto_sol_limpo).group(1) if re.search(r"\b(8\d{9})\b", texto_sol_limpo) else "NÃO CONSTA")
-
-                    s_centre = identificar_centro(texto_sol_upper)
-
-                    s_cep_match = re.search(r"CEP[^\d]*(\d{5}-?\d{3})", texto_sol_upper)
-                    s_addr = s_cep_match.group(1).replace("-", "") if s_cep_match else (re.search(r"\b(\d{8})\b", texto_sol_upper).group(1) if re.search(r"\b(\d{8})\b", texto_sol_upper) else "NÃO CONSTA")
-
-                    # --- EXTRAÇÃO DOCUMENTO VALIDADO (PACKING LIST) ---
-                    p_prot_match = re.search(r"PROTOCOL NUMBER\s*[:\s]*([A-Z0-9\-\/]+)", texto_packing_upper)
-                    if p_prot_match:
-                        p_prot_raw = p_prot_match.group(1).split('/')[0].strip()
-                        p_prot_match2 = re.search(r"(CA\d+-\d+)", p_prot_raw)
-                        p_prot = p_prot_match2.group(1) if p_prot_match2 else p_prot_raw
-                    else:
-                        p_prot = "NÃO CONSTA"
-
-                    p_ship_match = re.search(r"(?:DELIVERY NUMBER|SHIPMENT)\s*[:\s]*(\d{8,12})", texto_packing_upper)
-                    p_ship = p_ship_match.group(1) if p_ship_match else "NÃO CONSTA"
-
-                    p_shipto_bloco = texto_packing_upper.split("SHIP TO")[-1] if "SHIP TO" in texto_packing_upper else texto_packing_upper
-                    p_centre = identificar_centro(p_shipto_bloco)
-
-                    p_cep_match = re.search(r"(\d{5}-?\d{3})", p_shipto_bloco)
-                    p_addr = p_cep_match.group(1).replace("-", "") if p_cep_match else "NÃO CONSTA"
-
-                    # --- Investigator Name ---
-                    # O nome é extraído do Packing List (formato limpo: "Dr(a). Fulano
-                    # ... Tel:") e depois procurado no texto da NEWSE, em vez de usar
-                    # uma lista fixa de nomes.
-                    p_pi_match = re.search(r"DR\.?A?\.?\s+([A-Z][A-Z\s]+?)\s*TEL\s*:", texto_packing_upper)
-                    p_pi = limpar(p_pi_match.group(1)) if p_pi_match else "NÃO CONSTA"
-
-                    # Tolerante a erro de digitação no nome do meio: confirma pelo
-                    # PRIMEIRO e ÚLTIMO nome.
-                    pi_investigador_conferido = False
-                    pi_exato = False
-                    if p_pi != "NÃO CONSTA":
-                        palavras_pi = [w for w in p_pi.split() if len(w) >= 3]
-                        if p_pi in texto_sol_upper:
-                            pi_investigador_conferido = True
-                            pi_exato = True
-                        elif len(palavras_pi) >= 2 and palavras_pi[0] in texto_sol_upper and palavras_pi[-1] in texto_sol_upper:
-                            pi_investigador_conferido = True
-
-                    if pi_investigador_conferido:
-                        s_pi = p_pi if pi_exato else f"{p_pi} (confirmado por nome/sobrenome — grafia difere no meio)"
-                    elif p_pi != "NÃO CONSTA":
-                        s_pi = "NÃO ENCONTRADO NA NEWSE"
-                    else:
-                        s_pi = "NÃO CONSTA"
-
-                    p_qty_matches = re.findall(r"(\d+)\s*EA", texto_packing_upper)
-                    p_qty = str(sum([int(q) for q in p_qty_matches])) if p_qty_matches else "NÃO CONSTA"
-
-                    # Seriais da Packing List
-                    seriais_packing = []
-                    serial_matches = re.findall(r"SERIAL\s*NO\.?\s*\(([^)]+)\)", texto_packing_upper)
-                    if serial_matches:
-                        for bloco in serial_matches:
-                            if "-" in bloco:
-                                p_arr = bloco.split("-")
-                                if len(p_arr) == 2 and p_arr[0].strip().isdigit() and p_arr[1].strip().isdigit():
-                                    seriais_packing.extend([str(s) for s in range(int(p_arr[0]), int(p_arr[1]) + 1)])
-                            elif "," in bloco:
-                                seriais_packing.extend([s.strip() for s in bloco.split(",")])
-                            else:
-                                seriais_packing.append(bloco.strip())
-                    else:
-                        seriais_packing = re.findall(r"\b\d{5,8}\b", texto_packing_upper)
-                    seriais_packing = list(dict.fromkeys(seriais_packing))
-
-                    # Seriais da NEWSE: número logo antes de "AREA CLIMATIZADA" ou
-                    # "CAMARA FRIA". O \b evita pescar só o final de séries
-                    # alfanuméricas de logger (ex: "15450K53039").
-                    seriais_newse = re.findall(r"\b(\d{5,7})\s*(?:AREA|CAMARA)", texto_sol_upper)
-                    if not seriais_newse:
-                        seriais_newse = [s for s in seriais_packing if s in texto_sol_upper]
-                    seriais_newse = list(dict.fromkeys(seriais_newse))
-
-                    seriais_faltantes_na_newse = [s for s in seriais_packing if s not in seriais_newse]
-                    seriais_a_mais_na_newse = [s for s in seriais_newse if s not in seriais_packing]
-                    seriais_status_ok = not seriais_faltantes_na_newse and not seriais_a_mais_na_newse and len(seriais_packing) > 0
-
-                    s_qty = str(len(seriais_newse)) if seriais_newse else "NÃO CONSTA"
-
-                    # --- COMPARAÇÃO ESTRITA ---
-                    # Se o nome do centro não foi reconhecido/difere entre os sistemas
-                    # mas o CEP é idêntico, o CEP confirma o centro.
-                    centro_confirmado_por_alias = (s_centre != "NÃO CONSTA" and s_centre == p_centre)
-                    centro_confirmado_por_cep = (
-                        not centro_confirmado_por_alias
-                        and s_addr != "NÃO CONSTA" and s_addr == p_addr
-                    )
-                    centro_ok = centro_confirmado_por_alias or centro_confirmado_por_cep
-
-                    dados_validacao = [
-                        {
-                            "Campo Validado": "Dados de Protocolo",
-                            "Documento Fonte": s_prot,
-                            "Documento Validado": p_prot,
-                            "Status": "✅ Conforme" if s_prot != "NÃO CONSTA" and p_prot != "NÃO CONSTA" and (s_prot.replace("-","") in p_prot.replace("-","") or p_prot.replace("-","") in s_prot.replace("-","")) else "❌ Divergência",
-                            "Observação": "Protocolos idênticos." if s_prot == p_prot else "Protocolos divergentes entre os documentos."
-                        },
-                        {
-                            "Campo Validado": "Shipment Number",
-                            "Documento Fonte": s_ship,
-                            "Documento Validado": p_ship,
-                            "Status": "✅ Conforme" if s_ship != "NÃO CONSTA" and s_ship == p_ship else "❌ Divergência",
-                            "Observação": "Números de shipment idênticos." if s_ship == p_ship else "Divergência no shipment."
-                        },
-                        {
-                            "Campo Validado": "Centre and Department Name",
-                            "Documento Fonte": s_centre,
-                            "Documento Validado": p_centre,
-                            "Status": "✅ Conforme" if centro_ok else "❌ Divergência",
-                            "Observação": (
-                                "Razão social avaliada." if centro_confirmado_por_alias
-                                else "Nome do centro não reconhecido ou escrito de forma diferente nos dois sistemas, mas confirmado pelo CEP de destino (idêntico nos dois documentos)." if centro_confirmado_por_cep
-                                else "Divergência na razão social / centro."
-                            )
-                        },
-                        {
-                            "Campo Validado": "Depot site Address",
-                            "Documento Fonte": s_addr,
-                            "Documento Validado": p_addr,
-                            "Status": "✅ Conforme" if s_addr != "NÃO CONSTA" and s_addr == p_addr else "❌ Divergência",
-                            "Observação": "Endereço / CEP verificado." if s_addr == p_addr else "Divergência no endereço / CEP."
-                        },
-                        {
-                            "Campo Validado": "Investigator Name",
-                            "Documento Fonte": s_pi,
-                            "Documento Validado": p_pi,
-                            "Status": "✅ Conforme" if pi_investigador_conferido else "❌ Divergência",
-                            "Observação": (
-                                "Nome do investigador idêntico nos dois documentos." if pi_exato
-                                else "Nome e sobrenome do investigador conferem, mas a grafia do nome do meio difere entre os documentos (provável erro de digitação)." if pi_investigador_conferido
-                                else "Investigador do Packing List não foi encontrado no texto da NEWSE."
-                            )
-                        },
-                        {
-                            "Campo Validado": "Total quantity in shipment",
-                            "Documento Fonte": s_qty,
-                            "Documento Validado": p_qty,
-                            "Status": "✅ Conforme" if s_qty != "NÃO CONSTA" and s_qty == p_qty else "❌ Divergência",
-                            "Observação": "Quantidade total avaliada." if s_qty == p_qty else "Divergência na quantidade total."
-                        },
-                        {
-                            "Campo Validado": "Validação de Seriais dos Produtos",
-                            "Documento Fonte": f"Seriais: {', '.join(seriais_newse)}",
-                            "Documento Validado": f"Seriais: {', '.join(seriais_packing)}",
-                            "Status": "✅ Conforme" if seriais_status_ok else "❌ Divergência",
-                            "Observação": (
-                                "Números de série conferem integralmente." if seriais_status_ok
-                                else "Faltando na NEWSE: " + (", ".join(seriais_faltantes_na_newse) or "-") + " | A mais na NEWSE: " + (", ".join(seriais_a_mais_na_newse) or "-")
-                            )
-                        }
-                    ]
-
-                    df = pd.DataFrame(dados_validacao)
-
-                    def estilizar_status(val):
-                        if "Divergência" in val or "Ausente" in val:
-                            return f'<span style="color:red">{val}</span>'
-                        return val
-
-                    df_exibicao = df.copy()
-                    df_exibicao["Status"] = df_exibicao["Status"].apply(estilizar_status)
-
-                    st.markdown("### Tabela de Validação de Remessa")
-                    html_tabela = df_exibicao.to_html(escape=False, index=False, classes="dataframe")
-                    st.markdown(f"<div style='overflow-x:auto;'>{html_tabela}</div>", unsafe_allow_html=True)
-
-                    tem_divergencia = any("Divergência" in row["Status"] for row in dados_validacao)
-                    
-                    st.markdown("---")
-                    st.markdown("### Resumo Executivo")
-                    if tem_divergencia:
-                        st.error("🔴 **Classificação Final:** Reprovado por Divergência (Há inconsistências críticas entre os documentos ou seriais ausentes).")
-                    else:
-                        st.success("🟢 **Classificação Final:** Aprovado (Todos os campos e seriais conferem integralmente sem divergências).")
-
-                except Exception as e:
-                    st.error(f"Erro na execução da conferência: {e}")
-
-# ==========================================
-# PÁGINA: CONFERÊNCIA DE AGENDAMENTO (Packing List x NEWSE x Agendamento x Minuta)
-# ==========================================
-elif st.session_state.pagina_atual == "conferencia_agendamento":
-
-    st.markdown("""
-        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #6d28d9; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">🧾 Conferência de Agendamento — Packing List, NEWSE, Agendamento e Minuta</h2>
-            <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
-                Auditoria estruturada campo a campo, em 3 etapas: <b>Packing List x NEWSE</b>, <b>NEWSE x Agendamento</b>
-                e <b>Auditoria Final com a Minuta de Envio (SC)</b>. Todo campo comparado mostra o valor extraído dos dois
-                documentos lado a lado — nada fica marcado como correto sem ter sido checado de fato.
-            </p>
-        </div>
-    """, unsafe_allow_html=True)
-
-    if "conferencia_uploader_key" not in st.session_state:
-        st.session_state.conferencia_uploader_key = 0
-    if "conf_etapa3_resultado" not in st.session_state:
-        st.session_state.conf_etapa3_resultado = None
-    if "conf_etapa3_confirmado" not in st.session_state:
-        st.session_state.conf_etapa3_confirmado = False
-
-    col_excluir, col_excluir_vazio = st.columns([1, 4])
-    with col_excluir:
-        if st.button("🗑️ Excluir PDFs", key="conf_excluir_topo", use_container_width=True):
-            # Limpa os uploads das 3 etapas de uma vez (trocar a "key" faz o
-            # file_uploader virar um campo novo/vazio).
-            st.session_state.conferencia_uploader_key += 1
-            st.session_state.conf_etapa3_resultado = None
-            st.session_state.conf_etapa3_confirmado = False
-            st.rerun()
-
-    def extrair_texto_pdf_conferencia(arquivo):
-        """Extração com pypdf mantendo '\\n' entre páginas (os regex desta
-        página dependem de quebra de linha)."""
-        leitor_conf = PdfReader(arquivo)
-        return extrair_texto_pdf(leitor_conf, separador="\n")
-
-    def normalizar_alfanum(t):
-        """Maiúsculo e só letras/dígitos — para achar um Lote no texto da NEWSE
-        mesmo quando a extração do PDF grudou/quebrou a formatação."""
-        return re.sub(r"[^A-Z0-9]", "", str(t).upper())
-
-    def so_digitos(t):
-        return re.sub(r"\D", "", str(t))
-
-    def extrair_lista_contatos(texto_bruto):
-        """Bloco de texto bruto -> lista de nomes limpos separados por '/'."""
-        texto_limpo = re.sub(r"\s+", " ", str(texto_bruto)).strip()
-        nomes = []
-        for parte in texto_limpo.split("/"):
-            parte = parte.strip()
-            m = re.match(r"^([A-Za-zÀ-ÿ\s\.]+)", parte)
-            nome = m.group(1).strip() if m else parte
-            if nome:
-                nomes.append(nome)
-        return nomes
-
-    def comparar_listas_nomes(lista_a, texto_b_bruto):
-        """Confere se cada nome da lista_a aparece no texto_b_bruto, comparando
-        com TODOS os espaços removidos (a Minuta tem um artefato de fonte que
-        insere espaço no meio de palavras, ex: 'V itoria')."""
-        texto_b_normalizado = re.sub(r"\s+", "", remover_acentos(str(texto_b_bruto).upper()))
-        encontrados, faltando = [], []
-        for nome in lista_a:
-            nome_normalizado = re.sub(r"\s+", "", remover_acentos(nome.upper()))
-            if nome_normalizado and nome_normalizado in texto_b_normalizado:
-                encontrados.append(nome)
-            else:
-                faltando.append(nome)
-        return encontrados, faltando
-
-    MESES_CONF = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
-                  "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12}
-
-    def data_para_iso(data_str):
-        """'31-AUG-2028' (Packing List) -> '2028-08-31' (NEWSE). None se não reconhecer."""
-        m = re.match(r"(\d{1,2})-([A-Za-z]{3})-(\d{4})", str(data_str).strip())
-        if not m:
-            return None
-        dia, mes_txt, ano = m.groups()
-        mes = MESES_CONF.get(mes_txt.upper())
-        if not mes:
-            return None
-        return f"{ano}-{mes:02d}-{int(dia):02d}"
-
-    def extrair_itens_packing(texto):
-        """Extrai cada item da Packing List: Material, Batch (Lote), Quantity,
-        Use Date (Validade) e a lista de números de série."""
-        itens = []
-        padrao_item = re.compile(
-            r"(\d{5,8})\s+([A-Z0-9\.\-]+)\s+(\d+)\s*EA\s+(\d{1,2}-[A-Z]{3}-\d{4})",
-            re.IGNORECASE,
-        )
-        matches = list(padrao_item.finditer(texto))
-        for i, m in enumerate(matches):
-            material, lote, qtd, validade = m.groups()
-            bloco = texto[m.end(): matches[i + 1].start() if i + 1 < len(matches) else len(texto)]
-            nome_match = re.match(r"\s*([^\n]+)", bloco)
-            nome = nome_match.group(1).strip() if nome_match else "NÃO IDENTIFICADO"
-            serial_match = re.search(r"Serial\s*No\.?\s*\(([^)]+)\)", bloco, re.IGNORECASE)
-            seriais = [s.strip() for s in serial_match.group(1).split(",")] if serial_match else []
-            itens.append({
-                "material": material,
-                "lote": lote,
-                "quantidade": int(qtd),
-                "validade": validade.upper(),
-                "validade_iso": data_para_iso(validade),
-                "nome": nome,
-                "seriais": seriais,
-            })
-        return itens
-
-    def extrair_seriais_produtos_newse(texto_newse_bruto):
-        """Lê a tabela 'Produto(s)' da NEWSE e devolve serial -> [validades].
-        A extração do PDF gruda Nome+Lote+Validade+Série sem separador (ex:
-        'ADE45722028-08-31145783AREA'), então procura na tabela normalizada o
-        padrão <data AAAAMMDD><dígitos do serial> seguido de 'AREA'/'CAMARA'."""
-        bloco = texto_newse_bruto.split("Produto(s)")[-1]
-        if "Observações" in bloco:
-            bloco = bloco.split("Observações")[0]
-        bloco_normalizado = normalizar_alfanum(bloco)
-        padrao = re.compile(r"(20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))(\d{4,8})(?=AREA|CAMARA)")
-        mapa_serial_para_validades = {}
-        for m in padrao.finditer(bloco_normalizado):
-            data_compacta, serial = m.groups()
-            data_iso = f"{data_compacta[:4]}-{data_compacta[4:6]}-{data_compacta[6:]}"
-            mapa_serial_para_validades.setdefault(serial, []).append(data_iso)
-        return mapa_serial_para_validades, bloco_normalizado
-
-    def linha_conferencia(campo, valor_a, valor_b, ok, obs_ok, obs_divergente):
-        """Renderiza uma linha da tabela de conferência (sempre mostrando os dois
-        valores extraídos) e devolve se está OK."""
-        c1, c2, c3, c4 = st.columns([2.3, 2.2, 2.2, 1.6])
-        c1.write(f"**{campo}**")
-        c2.text(valor_a if valor_a else "—")
-        c3.text(valor_b if valor_b else "—")
-        c4.markdown("✅ Conforme" if ok else "❌ Divergência")
-        st.caption(obs_ok if ok else obs_divergente)
-        st.markdown("---")
-        return ok
-
-    tab_conf1, tab_conf2, tab_conf3 = st.tabs([
-        "Etapa 1: Packing List x NEWSE",
-        "Etapa 2: NEWSE x Agendamento",
-        "Etapa 3: Auditoria Final (Minuta)",
-    ])
-
-    # ---------------------------------------------------------
-    # ETAPA 1: PACKING LIST X NEWSE
-    # ---------------------------------------------------------
-    with tab_conf1:
-        st.markdown("#### Etapa 1: Validação de Raiz (Packing List x NEWSE)")
-        st.caption("Confronto estruturado campo a campo entre a Packing List e a NEWSE.")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            pedido_file = st.file_uploader("Arraste a Packing List (PDF)", type=["pdf"], key=f"conf_p_etapa1_{st.session_state.conferencia_uploader_key}")
-        with col2:
-            newse_file_1 = st.file_uploader("Arraste a NEWSE (PDF)", type=["pdf"], key=f"conf_n_etapa1_{st.session_state.conferencia_uploader_key}")
-
-        if st.button("Validar Etapa 1", key="conf_btn1"):
-            if pedido_file and newse_file_1:
-                t_pedido = extrair_texto_pdf_conferencia(pedido_file)
-                t_newse = extrair_texto_pdf_conferencia(newse_file_1)
-
-                checks_1 = []
-
-                # --- Delivery Number (Packing List) x Número da Ordem (NEWSE) ---
-                m_del_p = re.search(r"Delivery\s*number\s*:?\s*(\d+)", t_pedido, re.IGNORECASE)
-                del_p = m_del_p.group(1).strip() if m_del_p else "NÃO LOCALIZADO"
-                m_del_n = re.search(r"N[uú]mero da ordem\s*:?\s*(\d+)", t_newse, re.IGNORECASE)
-                del_n = m_del_n.group(1).strip() if m_del_n else "NÃO LOCALIZADO"
-                ok_delivery = del_p != "NÃO LOCALIZADO" and del_p == del_n
-
-                # --- Protocolo / Estudo ---
-                m_prot_p = re.search(r"Protocol number\s*:?\s*([A-Z0-9\-\/]+)", t_pedido, re.IGNORECASE)
-                prot_p_raw = m_prot_p.group(1) if m_prot_p else ""
-                m_prot_p2 = re.search(r"(CA\d+-\d+)", prot_p_raw.upper())
-                prot_p = m_prot_p2.group(1) if m_prot_p2 else (prot_p_raw or "NÃO LOCALIZADO")
-                m_prot_n = re.search(r"(CA\d+-\d+)", t_newse.upper())
-                prot_n = m_prot_n.group(1) if m_prot_n else "NÃO LOCALIZADO"
-                ok_protocolo = prot_p != "NÃO LOCALIZADO" and prot_p == prot_n
-
-                # --- CEP de destino ---
-                bloco_shipto_packing = t_pedido.split("Ship To")[-1] if "Ship To" in t_pedido else t_pedido
-                m_cep_p = re.search(r"(\d{5}-?\d{3})", bloco_shipto_packing)
-                cep_p = m_cep_p.group(1).replace("-", "") if m_cep_p else "NÃO LOCALIZADO"
-                m_cep_n = re.search(r"CEP[^\d]*(\d{5}-?\d{3})", t_newse, re.IGNORECASE)
-                cep_n = m_cep_n.group(1).replace("-", "") if m_cep_n else "NÃO LOCALIZADO"
-                ok_cep = cep_p != "NÃO LOCALIZADO" and cep_p == cep_n
-
-                # --- Investigador: fonte é a NEWSE; confere se aparece na Packing List ---
-                m_inv_n = re.search(
-                    r"Investigador\(es\) Principal\(is\) / M[eé]dico\(s\)\s*\n?Nome\s*\n?([^\n]+)",
-                    t_newse, re.IGNORECASE,
-                )
-                inv_n = m_inv_n.group(1).strip() if m_inv_n else "NÃO LOCALIZADO"
-                palavras_inv = [w for w in remover_acentos(inv_n.upper()).split() if len(w) >= 3]
-                packing_upper_noacc = remover_acentos(t_pedido.upper())
-                ok_investigador = bool(palavras_inv) and all(
-                    w in packing_upper_noacc for w in [palavras_inv[0], palavras_inv[-1]]
-                )
-
-                st.markdown("### 📋 Tabela de Conferência Analítica - Etapa 1")
-                checks_1.append(linha_conferencia(
-                    "Delivery Number x Número da Ordem", del_p, del_n, ok_delivery,
-                    "Números idênticos.",
-                    "Delivery Number da Packing List não bate com o Número da Ordem da NEWSE (ou não foi encontrado).",
-                ))
-                checks_1.append(linha_conferencia(
-                    "Protocolo / Estudo", prot_p, prot_n, ok_protocolo,
-                    "Protocolo idêntico nos dois documentos.",
-                    "Protocolo divergente ou não encontrado em um dos documentos.",
-                ))
-                checks_1.append(linha_conferencia(
-                    "CEP de Destino", cep_p, cep_n, ok_cep,
-                    "CEP de destino idêntico nos dois documentos.",
-                    "CEP de destino divergente ou não encontrado em um dos documentos.",
-                ))
-                checks_1.append(linha_conferencia(
-                    "Investigador (NEWSE) x Packing List", inv_n,
-                    "Encontrado no texto da Packing List" if ok_investigador else "NÃO encontrado no texto da Packing List",
-                    ok_investigador,
-                    "Nome do investigador da NEWSE localizado no texto da Packing List.",
-                    "Nome do investigador da NEWSE não foi localizado no texto da Packing List.",
-                ))
-
-                # --- Confronto Detalhado: Dispositivos / Produtos ---
-                st.markdown("### 📦 Confronto Detalhado: Dispositivos / Produtos (PACKING x NEWSE)")
-                st.caption(
-                    "Material/Batch/Quantity/Use Date/Serial No. (Packing List) x "
-                    "Nome/Lote/Quantidade/Validade/Peça ou Série (NEWSE). O mais importante: "
-                    "se um número aparece no campo Peça OU no campo Série da NEWSE, já conta como correto."
-                )
-
-                itens_packing = extrair_itens_packing(t_pedido)
-                mapa_serial_newse, bloco_produtos_newse_norm = extrair_seriais_produtos_newse(t_newse)
-
-                if not itens_packing:
-                    st.warning("⚠️ Não foi possível identificar os itens de produto na Packing List (formato não reconhecido — verifique manualmente pelos blocos de texto abaixo).")
-                    checks_1.append(False)
-
-                seriais_packing_todos = []
-                for item in itens_packing:
-                    seriais_packing_todos.extend(item["seriais"])
-                    lote_norm = normalizar_alfanum(item["lote"])
-                    lote_ok = lote_norm in bloco_produtos_newse_norm
-
-                    linhas_serial = []
-                    for s in item["seriais"]:
-                        datas_encontradas = mapa_serial_newse.get(s, [])
-                        encontrado = bool(datas_encontradas)
-                        validade_bate = encontrado and item["validade_iso"] in datas_encontradas
-                        linhas_serial.append((s, encontrado, validade_bate))
-
-                    qtd_ok = item["quantidade"] == len(item["seriais"])
-                    seriais_ok = bool(item["seriais"]) and all(v for _, _, v in linhas_serial)
-                    item_ok = lote_ok and qtd_ok and seriais_ok
-                    checks_1.append(item_ok)
-
-                    st.markdown(f"**{item['nome']}**  (Material {item['material']})")
-                    col_pk, col_nw = st.columns(2)
-                    with col_pk:
-                        st.markdown("📄 *Packing List*")
-                        st.text(f"Lote (Batch): {item['lote']}")
-                        st.text(f"Quantidade: {item['quantidade']}")
-                        st.text(f"Validade (Use Date): {item['validade']}")
-                        st.text(f"Peça/Série (Serial No.): {', '.join(item['seriais']) or 'N/A'}")
-                    with col_nw:
-                        st.markdown("📄 *NEWSE*")
-                        st.text(f"Lote encontrado: {'Sim' if lote_ok else 'NÃO ENCONTRADO'}")
-                        st.text(f"Quantidade de séries localizadas: {sum(1 for _, e, _ in linhas_serial if e)} de {item['quantidade']}")
-                        for s, encontrado, validade_bate in linhas_serial:
-                            if encontrado and validade_bate:
-                                st.text(f"✅ Peça/Série {s} — encontrada, validade confere")
-                            elif encontrado and not validade_bate:
-                                st.text(f"⚠️ Peça/Série {s} — encontrada, mas com validade diferente")
-                            else:
-                                st.text(f"❌ Peça/Série {s} — NÃO encontrada na NEWSE")
-                    st.markdown("✅ **Item conforme**" if item_ok else "❌ **Item com divergência**")
-                    st.markdown("---")
-
-                a_mais_na_newse = [s for s in mapa_serial_newse.keys() if s not in seriais_packing_todos]
-                if a_mais_na_newse:
-                    st.warning(f"⚠️ Seriais a mais na NEWSE, sem produto correspondente na Packing List: {', '.join(a_mais_na_newse)}")
-                    checks_1.append(False)
-                elif itens_packing:
-                    st.success("✅ Nenhum serial a mais na NEWSE — todos os produtos da NEWSE têm correspondência na Packing List.")
-
-                col_d1, col_d2 = st.columns(2)
-                with col_d1:
-                    with st.expander("Ver texto bruto extraído da Packing List"):
-                        st.text(t_pedido)
-                with col_d2:
-                    with st.expander("Ver texto bruto extraído da NEWSE"):
-                        st.text(t_newse)
-
-                st.markdown("---")
-                aprovado_1 = all(checks_1)
-                if aprovado_1:
-                    st.success("🎉 **Resultado Final da Etapa 1:** APROVADO! Todos os dados essenciais e itens conferem perfeitamente.")
-                else:
-                    st.error("🚨 **Resultado Final da Etapa 1:** REPROVADO! Divergências encontradas entre os documentos (veja acima quais campos/itens).")
-            else:
-                st.warning("Por favor, faça o upload de ambos os arquivos.")
-
-    # ---------------------------------------------------------
-    # ETAPA 2: NEWSE X AGENDAMENTO
-    # ---------------------------------------------------------
-    with tab_conf2:
-        st.markdown("#### Etapa 2: Validação de Comunicação (NEWSE x Agendamento)")
-        st.caption("Confronto estruturado entre a NEWSE e o e-mail de Agendamento (ignorando data e horário de entrega).")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            newse_file_2 = st.file_uploader("Arraste a NEWSE (PDF)", type=["pdf"], key=f"conf_n_etapa2_{st.session_state.conferencia_uploader_key}")
-        with col2:
-            agenda_file = st.file_uploader("Arraste o E-mail de Agendamento (PDF)", type=["pdf"], key=f"conf_a_etapa2_{st.session_state.conferencia_uploader_key}")
-
-        if st.button("Validar Etapa 2", key="conf_btn2"):
-            if newse_file_2 and agenda_file:
-                t_newse2 = extrair_texto_pdf_conferencia(newse_file_2)
-                t_agenda = extrair_texto_pdf_conferencia(agenda_file)
-
-                checks_2 = []
-
-                m_prot_n2 = re.search(r"(CA\d+-\d+)", t_newse2.upper())
-                prot_n2 = m_prot_n2.group(1) if m_prot_n2 else "NÃO LOCALIZADO"
-                m_prot_a = re.search(r"(CA\d+-\d+)", t_agenda.upper())
-                prot_a = m_prot_a.group(1) if m_prot_a else "NÃO LOCALIZADO"
-                ok_prot2 = prot_n2 != "NÃO LOCALIZADO" and prot_n2 == prot_a
-
-                bloco_dest_n = t_newse2.split("Dados do Destinatário")[-1] if "Dados do Destinatário" in t_newse2 else t_newse2
-                m_cnpj_n = re.search(r"(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})", bloco_dest_n)
-                cnpj_n = so_digitos(m_cnpj_n.group(1)) if m_cnpj_n else "NÃO LOCALIZADO"
-                m_cnpj_a = re.search(r"CPF\s*/\s*CNPJ\s*:?\s*([\d\.\/\-]+)", t_agenda, re.IGNORECASE)
-                cnpj_a = so_digitos(m_cnpj_a.group(1)) if m_cnpj_a else "NÃO LOCALIZADO"
-                ok_cnpj2 = cnpj_n != "NÃO LOCALIZADO" and cnpj_n == cnpj_a
-
-                m_cep_n2 = re.search(r"CEP[^\d]*(\d{5}-?\d{3})", t_newse2, re.IGNORECASE)
-                cep_n2 = so_digitos(m_cep_n2.group(1)) if m_cep_n2 else "NÃO LOCALIZADO"
-                m_cep_a = re.search(r"CEP\s*:?\s*\n?\s*(\d{5}-?\d{3})", t_agenda, re.IGNORECASE)
-                cep_a = so_digitos(m_cep_a.group(1)) if m_cep_a else "NÃO LOCALIZADO"
-                ok_cep2 = cep_n2 != "NÃO LOCALIZADO" and cep_n2 == cep_a
-
-                m_contatos_n = re.search(
-                    r"Pessoa\(s\) Autorizada\(s\)\s*\nNome[^\n]*\n(.+?)Investigador",
-                    t_newse2, re.IGNORECASE | re.DOTALL,
-                )
-                contatos_n = extrair_lista_contatos(m_contatos_n.group(1)) if m_contatos_n else []
-                m_contatos_a = re.search(r"Contatos autorizados\s*:?(.+?)Data da entrega", t_agenda, re.IGNORECASE | re.DOTALL)
-                contatos_a_texto = m_contatos_a.group(1) if m_contatos_a else ""
-                encontrados_c2, faltando_c2 = comparar_listas_nomes(contatos_n, contatos_a_texto)
-                ok_contatos2 = bool(contatos_n) and not faltando_c2
-
-                st.markdown("### 📋 Tabela de Conferência Analítica - Etapa 2")
-                checks_2.append(linha_conferencia(
-                    "Protocolo / Estudo", prot_n2, prot_a, ok_prot2,
-                    "Protocolo idêntico nos dois documentos.",
-                    "Protocolo divergente ou não encontrado em um dos documentos.",
-                ))
-                checks_2.append(linha_conferencia(
-                    "CNPJ do Centro / Destinatário", cnpj_n, cnpj_a, ok_cnpj2,
-                    "CNPJ idêntico nos dois documentos.",
-                    "CNPJ divergente ou não encontrado em um dos documentos.",
-                ))
-                checks_2.append(linha_conferencia(
-                    "CEP do Centro", cep_n2, cep_a, ok_cep2,
-                    "CEP idêntico nos dois documentos.",
-                    "CEP divergente ou não encontrado em um dos documentos.",
-                ))
-                checks_2.append(linha_conferencia(
-                    "Contatos Autorizados de Entrega",
-                    ", ".join(contatos_n) or "NÃO LOCALIZADO",
-                    f"{len(encontrados_c2)}/{len(contatos_n)} confirmados" if contatos_n else "NÃO LOCALIZADO",
-                    ok_contatos2,
-                    "Todos os contatos autorizados da NEWSE aparecem no e-mail de Agendamento.",
-                    "Faltando no Agendamento: " + (", ".join(faltando_c2) or "-"),
-                ))
-                c1, c2, c3, c4 = st.columns([2.3, 2.2, 2.2, 1.6])
-                c1.write("**Janela de Entrega (Data/Horário)**")
-                c2.text("Ignorado por regra")
-                c3.text("Ignorado por regra")
-                c4.markdown("➖ Não avaliado")
-                st.caption("Por regra desta etapa, data e horário de entrega não são conferidos aqui (podem mudar por reagendamento sem indicar problema no envio).")
-                st.markdown("---")
-
-                aprovado_2 = all(checks_2)
-                if aprovado_2:
-                    st.success("🎉 **Resultado Final da Etapa 2:** APROVADO! O agendamento confere com a NEWSE.")
-                else:
-                    st.error("🚨 **Resultado Final da Etapa 2:** REPROVADO! Divergências encontradas entre os documentos (veja acima quais campos).")
-            else:
-                st.warning("Por favor, faça o upload de ambos os arquivos.")
-
-    # ---------------------------------------------------------
-    # ETAPA 3: AUDITORIA FINAL (MINUTA)
-    # ---------------------------------------------------------
-    with tab_conf3:
-        st.markdown("#### Etapa 3: Auditoria Final (Todas as Documentações + Minuta)")
-        st.caption("Auditoria cruzada final com a Minuta de Envio (SC) e regras fixas de transporte DRS.")
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            f_newse_3 = st.file_uploader("NEWSE", type=["pdf"], key=f"conf_n_etapa3_{st.session_state.conferencia_uploader_key}")
-        with col2:
-            f_agenda_3 = st.file_uploader("Agendamento", type=["pdf"], key=f"conf_a_etapa3_{st.session_state.conferencia_uploader_key}")
-        with col3:
-            f_minuta_3 = st.file_uploader("Minuta de Envio (SC)", type=["pdf"], key=f"conf_m_etapa3_{st.session_state.conferencia_uploader_key}")
-
-        if st.button("Executar Auditoria Final", key="conf_btn3"):
-            if f_newse_3 and f_agenda_3 and f_minuta_3:
-                t_newse3 = extrair_texto_pdf_conferencia(f_newse_3)
-                t_minuta = extrair_texto_pdf_conferencia(f_minuta_3)
-
-                checks_3 = []
-
-                cnpjs_drs_validos = ["00804488000100", "00804488000290"]
-                m_remetente = re.search(r"Remetente\s*-\s*([\d\.\/\-\s]+)", t_minuta)
-                remetente_digits = so_digitos(m_remetente.group(1)) if m_remetente else ""
-                ok_remetente = remetente_digits in cnpjs_drs_validos
-
-                m_prot_n3 = re.search(r"(CA\d+-\d+)", t_newse3.upper())
-                prot_n3 = m_prot_n3.group(1) if m_prot_n3 else "NÃO LOCALIZADO"
-                m_prot_m = re.search(r"(CA\d+-\d+)", t_minuta.upper())
-                prot_m = m_prot_m.group(1) if m_prot_m else "NÃO LOCALIZADO"
-                ok_prot3 = prot_n3 != "NÃO LOCALIZADO" and prot_n3 == prot_m
-
-                m_track_n = re.search(r"Tracking Number\s*:?\s*\n?\s*([\d\-]+)", t_newse3, re.IGNORECASE)
-                track_n = m_track_n.group(1) if m_track_n else "NÃO LOCALIZADO"
-                m_track_m = re.search(r"TRACKING NUMBER\s+([\d\-]+)", t_minuta, re.IGNORECASE)
-                track_m = m_track_m.group(1) if m_track_m else "NÃO LOCALIZADO"
-                ok_track = track_n != "NÃO LOCALIZADO" and track_n == track_m
-
-                bloco_dest_n3 = t_newse3.split("Dados do Destinatário")[-1] if "Dados do Destinatário" in t_newse3 else t_newse3
-                m_cnpj_n3 = re.search(r"(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})", bloco_dest_n3)
-                cnpj_n3 = so_digitos(m_cnpj_n3.group(1)) if m_cnpj_n3 else "NÃO LOCALIZADO"
-                m_dest_minuta = re.search(r"Destinat[aá]rio\s*-\s*([\d\s]+)", t_minuta)
-                dest_cnpj_minuta = so_digitos(m_dest_minuta.group(1)) if m_dest_minuta else "NÃO LOCALIZADO"
-                ok_dest_cnpj = dest_cnpj_minuta != "NÃO LOCALIZADO" and dest_cnpj_minuta == cnpj_n3
-
-                m_inv_n3 = re.search(
-                    r"Investigador\(es\) Principal\(is\) / M[eé]dico\(s\)\s*\n?Nome\s*\n?([^\n]+)",
-                    t_newse3, re.IGNORECASE,
-                )
-                inv_n3 = m_inv_n3.group(1).strip() if m_inv_n3 else "NÃO LOCALIZADO"
-                m_pi_minuta = re.search(r"P\.I\.\s*([^\n]+)", t_minuta)
-                pi_minuta = m_pi_minuta.group(1).strip() if m_pi_minuta else "NÃO LOCALIZADO"
-                palavras_inv3 = [w for w in remover_acentos(inv_n3.upper()).split() if len(w) >= 3]
-                ok_pi3 = bool(palavras_inv3) and all(
-                    w in remover_acentos(pi_minuta.upper()) for w in [palavras_inv3[0], palavras_inv3[-1]]
-                )
-
-                m_contatos_n3 = re.search(
-                    r"Pessoa\(s\) Autorizada\(s\)\s*\nNome[^\n]*\n(.+?)Investigador",
-                    t_newse3, re.IGNORECASE | re.DOTALL,
-                )
-                contatos_n3 = extrair_lista_contatos(m_contatos_n3.group(1)) if m_contatos_n3 else []
-                # "CONTATO" e "COLETA" às vezes saem com espaço extra ("CONT ATO").
-                m_contatos_m = re.search(
-                    r"CONT\s*ATO AUTORIZADO ENTREGA\s*(.+?)CONT\s*ATO AUTORIZADO COLET\s*A",
-                    t_minuta, re.IGNORECASE | re.DOTALL,
-                )
-                contatos_m_texto = m_contatos_m.group(1) if m_contatos_m else ""
-                encontrados_c3, faltando_c3 = comparar_listas_nomes(contatos_n3, contatos_m_texto)
-                ok_contatos3 = bool(contatos_n3) and not faltando_c3
-
-                m_transp = re.search(r"DRS\s*(COURIER|ADMINISTRA[CÇ][AÃ]O DE ESTOQUES)", t_minuta, re.IGNORECASE)
-                ok_transp = bool(m_transp)
-
-                # Guarda o resultado em session_state (em vez de desenhar direto
-                # aqui): os botões "OK" e "Liberar Processo" disparam novo rerun e
-                # o botão "Executar Auditoria Final" não estaria mais pressionado.
-                linhas_3 = [
-                    ("Protocolo / Estudo", prot_n3, prot_m, ok_prot3,
-                     "Protocolo idêntico nos dois documentos.",
-                     "Protocolo divergente ou não encontrado em um dos documentos."),
-                    ("Remetente DRS (CNPJ Fixo Oficial)", "00804488000100 ou 00804488000290", remetente_digits, ok_remetente,
-                     "CNPJ do remetente é um dos CNPJs oficiais da DRS.",
-                     "CNPJ do remetente na Minuta não é nenhum dos CNPJs oficiais da DRS."),
-                    ("Tracking Number", track_n, track_m, ok_track,
-                     "Tracking Number idêntico nos dois documentos.",
-                     "Tracking Number divergente ou não encontrado em um dos documentos."),
-                    ("CNPJ do Destinatário", cnpj_n3, dest_cnpj_minuta, ok_dest_cnpj,
-                     "CNPJ do destinatário idêntico nos dois documentos.",
-                     "CNPJ do destinatário divergente ou não encontrado em um dos documentos."),
-                    ("P.I. / Investigador", inv_n3, pi_minuta, ok_pi3,
-                     "Nome do investigador da NEWSE localizado no campo P.I. da Minuta.",
-                     "Nome do investigador da NEWSE não foi localizado no campo P.I. da Minuta."),
-                    ("Contatos Autorizados",
-                     ", ".join(contatos_n3) or "NÃO LOCALIZADO",
-                     f"{len(encontrados_c3)}/{len(contatos_n3)} confirmados" if contatos_n3 else "NÃO LOCALIZADO",
-                     ok_contatos3,
-                     "Todos os contatos autorizados da NEWSE aparecem na Minuta.",
-                     "Faltando na Minuta: " + (", ".join(faltando_c3) or "-")),
-                    ("Transportadora", "DRS COURIER LTDA (regra fixa)",
-                     m_transp.group(0) if m_transp else "NÃO ENCONTRADA", ok_transp,
-                     "Transportadora oficial DRS identificada na Minuta.",
-                     "Transportadora oficial DRS não foi encontrada na Minuta."),
-                ]
-                aprovado_3 = all(linha[3] for linha in linhas_3)
-                st.session_state.conf_etapa3_resultado = {"linhas": linhas_3, "aprovado": aprovado_3}
-                # Nova auditoria: qualquer confirmação de OK anterior deixa de valer.
-                st.session_state.conf_etapa3_confirmado = False
-            else:
-                st.warning("Por favor, faça o upload de todos os três documentos exigidos.")
-
-        resultado_3 = st.session_state.conf_etapa3_resultado
-        if resultado_3:
-            st.markdown("### 📋 Tabela de Conferência Analítica - Etapa 3")
-            for linha in resultado_3["linhas"]:
-                linha_conferencia(*linha)
-
-            if resultado_3["aprovado"]:
-                st.success("🎉 **Resultado Final da Etapa 3:** TUDO CERTO com a minuta de envio! Processo liberado para o time de Expedição.")
-            else:
-                st.error("🚨 **Resultado Final da Etapa 3:** REPROVADO! Divergências encontradas entre os documentos (veja acima quais campos).")
-
-            st.markdown("---")
-
-            # Confirmação obrigatória antes de liberar o processo.
-            if not st.session_state.conf_etapa3_confirmado:
-                if st.button("✅ OK — Revisei o Resultado da Etapa 3", key="conf_etapa3_ok_btn", use_container_width=True):
-                    st.session_state.conf_etapa3_confirmado = True
-                    st.rerun()
-            else:
-                st.info("⚠️ **Não esqueça de validar a planilha de expedição.**")
-                if st.button("🔓 Liberar Processo (limpar PDFs das Etapas 1, 2 e 3)", key="conf_liberar_btn", use_container_width=True):
-                    st.session_state.conferencia_uploader_key += 1
-                    st.session_state.conf_etapa3_resultado = None
-                    st.session_state.conf_etapa3_confirmado = False
-                    st.rerun()
-
-# ==========================================
-# PÁGINA: BMS BRASIL - SOLICITAÇÕES (retirada de TAG sem Packing List)
+# PÁGINA: BMS BRASIL - SOLICITAÇÕES
 # ==========================================
 elif st.session_state.pagina_atual == "bms_brasil":
 
-    st.markdown("""
-        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #209b7c; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">🇧🇷 BMS Brasil — Solicitações</h2>
-            <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
-                Para solicitações da <b>BMS Brasil</b>, a NEWSE não vem acompanhada de Packing List com TAG/TEMP já definido.
-                Anexe a <b>NEWSE (PDF)</b> aqui para retirar automaticamente o <b>Tag Alert</b> (Ambiente ou Refrigerado, conforme a
-                faixa de temperatura da solicitação) e registrar a retirada para rastreabilidade — sem TempTale, e sem precisar
-                editar a planilha manualmente.
-            </p>
-        </div>
-    """, unsafe_allow_html=True)
+    banner(
+        "🇧🇷 BMS Brasil — Solicitações",
+        "Anexe a <b>NEWSE (PDF)</b> e escolha a categoria. Para <b>Medicação</b>, o portal retira automaticamente o "
+        "<b>Tag Alert</b> (Ambiente ou Refrigerado, conforme a temperatura da solicitação) e registra a retirada. "
+        "<b>Equipamento / Suprimento</b> não usa Tag Alert. Nos dois casos o checklist de particularidades é gerado.",
+    )
 
     arquivo_newse_brasil = st.file_uploader(
         "📥 Arraste o PDF da NEWSE (Solicitação Brasil) aqui",
@@ -2087,163 +894,184 @@ elif st.session_state.pagina_atual == "bms_brasil":
         # --- Faixa de temperatura (decide Tag Alert Ambiente x Refrigerado) ---
         tem_ref_brasil, tem_amb_brasil = detectar_faixas_newse(texto_brasil_upper)
 
+        # --- DEPOSITANTE (CNPJ): lido da NEWSE, com 0 na frente como na Automação ---
+        m_dep_brasil = re.search(r"DEPOSITANTE\s*:?\s*(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})", texto_brasil_upper)
+        val_depositante_brasil = ("0" + re.sub(r"\D", "", m_dep_brasil.group(1))) if m_dep_brasil else "056998982001260"
+
         st.success("✅ NEWSE processada com sucesso.")
         c1, c2, c3 = st.columns(3)
         with c1: st.markdown(card_metrica("Centro / Instituição", centro_brasil), unsafe_allow_html=True)
         with c2: st.markdown(card_metrica("Protocolo / Estudo", estudo_brasil), unsafe_allow_html=True)
         with c3: st.markdown(card_metrica("TE Correspondente", te_brasil), unsafe_allow_html=True)
-                # DEPOSITANTE (CNPJ) — igual à Automação
-        m_dep_brasil = re.search(r"DEPOSITANTE\s*:?\s*(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})", texto_brasil_upper)
-        val_depositante_brasil = ("0" + re.sub(r"\D", "", m_dep_brasil.group(1))) if m_dep_brasil else "056998982001260"
-        components.html(f"""<div style="display:flex; justify-content:space-between; align-items: center; padding:6px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; margin-top:8px;">
-        <div><span style="color:#475569; font-weight:bold; font-size:11px;">DEPOSITANTE:</span> <span style="font-family:monospace; color:#209b7c; font-size:13px; font-weight:bold; margin-left:5px;">{val_depositante_brasil}</span></div>
-        <button onclick="navigator.clipboard.writeText('{val_depositante_brasil}'); this.innerText='Copiado!'; setTimeout(()=>this.innerText='Copiar', 2000)" style="background:#209b7c; color:white; border:none; border-radius:3px; cursor:pointer; font-size:11px; padding:4px 10px; font-weight:bold;">Copiar</button></div>""", height=50)
         st.write("")
-
-        st.markdown("### 🏷️ Retirada de Tag Alert")
-
-        if not tem_ref_brasil and not tem_amb_brasil:
-            st.warning("⚠️ Não foi possível identificar a faixa de temperatura (Ambiente/Refrigerado) nesta NEWSE. Verifique o documento manualmente.")
+        linha_copia("DEPOSITANTE", val_depositante_brasil, altura=50)
 
         # Identidade estável deste upload (evita duplicar a retirada no rerun).
         arquivo_id_brasil = getattr(arquivo_newse_brasil, "file_id", None) or f"{arquivo_newse_brasil.name}_{arquivo_newse_brasil.size}"
-        registro_existente_brasil = st.session_state.solicitacoes_brasil_registradas.get(arquivo_id_brasil)
 
-        if registro_existente_brasil:
+        # --- Categoria (decide se há retirada de Tag Alert) ---
+        st.markdown("### 🗂️ Categoria da solicitação")
+        categoria_brasil = st.radio(
+            "Categoria da solicitação", [CATEGORIA_MEDICACAO, CATEGORIA_SUPRIMENTO],
+            index=None, horizontal=True,
+            key=f"brasil_categoria_{arquivo_id_brasil}", label_visibility="collapsed",
+        )
+
+        if categoria_brasil is None:
             st.session_state.alocacao_pendente = False
-            itens_brasil = registro_existente_brasil["itens"]
-            st.success(f"✅ Retirada já registrada para esta NEWSE em {registro_existente_brasil['data_uso']}.")
-            for p in itens_brasil:
-                st.markdown(f"- **{p['label']}** ➔ Palete: {p['palete']} | ID: {p['id_est']} | Série: {p['serie']}")
-            st.caption("Para registrar uma nova solicitação, envie um novo arquivo PDF acima.")
+            st.info("Escolha a categoria (Medicação ou Equipamento / Suprimento) para continuar.")
+
+        elif categoria_brasil == CATEGORIA_SUPRIMENTO:
+            # Equipamento / Suprimento não usa Tag Alert: nada é retirado do estoque.
+            st.session_state.alocacao_pendente = False
+            components.html("<script>window.parent.onbeforeunload = null;</script>", height=0)
+            st.info("📦 Equipamento / Suprimento não utiliza Tag Alert — nenhuma retirada de estoque será feita.")
+
         else:
-            itens_brasil = []
+            st.markdown("### 🏷️ Retirada de Tag Alert")
 
-            if df_estoque is not None and not df_estoque.empty:
-                df_estoque_temp_brasil = df_estoque.copy()
+            if not tem_ref_brasil and not tem_amb_brasil:
+                st.warning("⚠️ Não foi possível identificar a faixa de temperatura (Ambiente/Refrigerado) nesta NEWSE. Verifique o documento manualmente.")
 
-                def allocate_logger_brasil(nome_busca, label):
-                    filtro = df_estoque_temp_brasil[
-                        df_estoque_temp_brasil['Descricao_Clean'].str.contains(nome_busca, na=False)
-                    ]
-                    if not filtro.empty:
-                        item = filtro.iloc[0]
-                        df_estoque_temp_brasil.drop(item.name, inplace=True)
-                        serie = next((str(item[c]) for c in item.index if "SERIE" in c.upper() or "SÉRIE" in c.upper()), str(item.iloc[7]) if len(item) > 7 else "N/A")
-                        itens_brasil.append({
-                            "label": label,
-                            "palete": str(item.get('Palete', 'N/A')).strip(),
-                            "id_est": str(item.get('Identificacao Estoque', 'N/A')).strip(),
-                            "serie": serie
-                        })
-                        st.info(f"**{label}** alocado ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')} | Série: {serie}")
-                    else:
-                        st.warning(f"⚠️ **{label}**: Sem saldo disponível no estoque!")
+            registro_existente_brasil = st.session_state.solicitacoes_brasil_registradas.get(arquivo_id_brasil)
 
-                # Só Tag Alert — solicitações Brasil não usam TempTale.
-                # Um Tag Alert por faixa de temperatura detectada.
-                if tem_amb_brasil:
-                    allocate_logger_brasil("TAGALERT 15-25", "Tag Alert Ambiente")
-                if tem_ref_brasil:
-                    allocate_logger_brasil("TAGALERT 2-8", "Tag Alert Refrigerado")
-
-                st.session_state.alocacao_pendente = bool(itens_brasil)
-
-                if itens_brasil:
-                    st.markdown(
-                        "<div class='drs-alerta-pendente'>⚠️ Retirada pendente de confirmação — clique em "
-                        "<b>Gravar Solicitação Brasil</b> antes de sair desta página, "
-                        "ou os itens acima podem ser usados por outra pessoa.</div>",
-                        unsafe_allow_html=True
-                    )
-                    components.html(
-                        "<script>window.parent.onbeforeunload = function(e){ e.preventDefault(); e.returnValue = ''; return ''; };</script>",
-                        height=0
-                    )
-                else:
-                    components.html("<script>window.parent.onbeforeunload = null;</script>", height=0)
-
-                col_id_brasil, col_btn_brasil = st.columns([2, 1])
-                with col_id_brasil:
-                    # Campo travado de propósito: solicitações Brasil não têm DEL#.
-                    st.text_input("Identificador para registro:", value="Solicitação Brasil", disabled=True)
-                with col_btn_brasil:
-                    st.write("")
-                    if st.button("💾 Gravar Solicitação Brasil", use_container_width=True, disabled=not itens_brasil):
-                        webhook_url = st.secrets.get(
-                            "WEBHOOK_BAIXA_ESTOQUE",
-                            "https://script.google.com/macros/s/AKfycbzpwZC2LW7PQ1JGMkJIZD3Rxd4nv4pfEZ1QS1D9jDxQbt4Qf2hiCmv9dJ8pAJnBHJglug/exec"
-                        )
-
-                        payload = {
-                            "data_uso": datetime.today().strftime('%d/%m/%Y'),
-                            "delivery_number": "Solicitação Brasil",
-                            "estudo": estudo_brasil,
-                            "te": te_brasil,
-                            "cidade_destino": centro_brasil,
-                            "itens": [
-                                {
-                                    "tipo": p["label"],
-                                    "palete": p["palete"],
-                                    "id_est": p["id_est"],
-                                    "serie": p["serie"]
-                                } for p in itens_brasil
-                            ]
-                        }
-
-                        try:
-                            req = urllib.request.Request(
-                                webhook_url,
-                                data=json.dumps(payload).encode('utf-8'),
-                                headers={'Content-Type': 'application/json'}
-                            )
-                            resposta_bruta = urllib.request.urlopen(req, timeout=25).read().decode("utf-8")
-                            try:
-                                resposta = json.loads(resposta_bruta)
-                            except ValueError:
-                                resposta = {}
-
-                            if resposta.get("result") != "success":
-                                raise RuntimeError(
-                                    resposta.get("message", f"Resposta inesperada do servidor: {resposta_bruta[:300]}")
-                                )
-
-                            for p in itens_brasil:
-                                st.session_state.seriais_consumidos.add(str(p["serie"]).strip())
-                                st.session_state.ids_consumidos.add(str(p["id_est"]).strip())
-
-                            st.session_state.solicitacoes_brasil_registradas[arquivo_id_brasil] = {
-                                "itens": itens_brasil,
-                                "data_uso": datetime.today().strftime('%d/%m/%Y %H:%M'),
-                            }
-                            st.session_state.alocacao_pendente = False
-                            st.session_state.brasil_uploader_key += 1
-
-                            st.cache_data.clear()
-                            itens_txt_brasil = ", ".join([p["label"] for p in itens_brasil])
-                            st.success(f"✅ Retirada registrada com sucesso para: {itens_txt_brasil}.")
-                            time.sleep(2)
-                            st.rerun()
-                        except Exception as ex:
-                            st.error(f"Erro ao atualizar planilha: {ex}")
+            if registro_existente_brasil:
+                st.session_state.alocacao_pendente = False
+                itens_brasil = registro_existente_brasil["itens"]
+                st.success(f"✅ Retirada já registrada para esta NEWSE em {registro_existente_brasil['data_uso']}.")
+                for p in itens_brasil:
+                    st.markdown(f"- **{p['label']}** ➔ Palete: {p['palete']} | ID: {p['id_est']} | Série: {p['serie']}")
+                st.caption("Para registrar uma nova solicitação, envie um novo arquivo PDF acima.")
             else:
-                st.warning("⚠️ Estoque indisponível no momento — não é possível alocar Tag Alert automaticamente.")
+                itens_brasil = []
 
-        st.markdown("### ✅ Checklist de Particularidades — BMS Brasil")
-        renderizar_checklist_brasil(texto_brasil_upper, arquivo_id_brasil, tem_ref_brasil, tem_amb_brasil)
+                if df_estoque is not None and not df_estoque.empty:
+                    df_estoque_temp_brasil = df_estoque.copy()
+
+                    def allocate_logger_brasil(nome_busca, label):
+                        filtro = df_estoque_temp_brasil[
+                            df_estoque_temp_brasil['Descricao_Clean'].str.contains(nome_busca, na=False)
+                        ]
+                        if not filtro.empty:
+                            item = filtro.iloc[0]
+                            df_estoque_temp_brasil.drop(item.name, inplace=True)
+                            serie = next((str(item[c]) for c in item.index if "SERIE" in c.upper() or "SÉRIE" in c.upper()), str(item.iloc[7]) if len(item) > 7 else "N/A")
+                            itens_brasil.append({
+                                "label": label,
+                                "palete": str(item.get('Palete', 'N/A')).strip(),
+                                "id_est": str(item.get('Identificacao Estoque', 'N/A')).strip(),
+                                "serie": serie
+                            })
+                            st.info(f"**{label}** alocado ➔ Palete: {item.get('Palete', 'N/A')} | ID: {item.get('Identificacao Estoque', 'N/A')} | Série: {serie}")
+                        else:
+                            st.warning(f"⚠️ **{label}**: Sem saldo disponível no estoque!")
+
+                    # Só Tag Alert — solicitações Brasil não usam TempTale.
+                    # Um Tag Alert por faixa de temperatura detectada.
+                    if tem_amb_brasil:
+                        allocate_logger_brasil("TAGALERT 15-25", "Tag Alert Ambiente")
+                    if tem_ref_brasil:
+                        allocate_logger_brasil("TAGALERT 2-8", "Tag Alert Refrigerado")
+
+                    st.session_state.alocacao_pendente = bool(itens_brasil)
+
+                    if itens_brasil:
+                        st.markdown(
+                            "<div class='drs-alerta-pendente'>⚠️ Retirada pendente de confirmação — clique em "
+                            "<b>Gravar Solicitação Brasil</b> antes de sair desta página, "
+                            "ou os itens acima podem ser usados por outra pessoa.</div>",
+                            unsafe_allow_html=True
+                        )
+                        components.html(
+                            "<script>window.parent.onbeforeunload = function(e){ e.preventDefault(); e.returnValue = ''; return ''; };</script>",
+                            height=0
+                        )
+                    else:
+                        components.html("<script>window.parent.onbeforeunload = null;</script>", height=0)
+
+                    col_id_brasil, col_btn_brasil = st.columns([2, 1])
+                    with col_id_brasil:
+                        # Campo travado de propósito: solicitações Brasil não têm DEL#.
+                        st.text_input("Identificador para registro:", value="Solicitação Brasil", disabled=True)
+                    with col_btn_brasil:
+                        st.write("")
+                        if st.button("💾 Gravar Solicitação Brasil", use_container_width=True, disabled=not itens_brasil):
+                            webhook_url = st.secrets.get(
+                                "WEBHOOK_BAIXA_ESTOQUE",
+                                "https://script.google.com/macros/s/AKfycbzpwZC2LW7PQ1JGMkJIZD3Rxd4nv4pfEZ1QS1D9jDxQbt4Qf2hiCmv9dJ8pAJnBHJglug/exec"
+                            )
+
+                            payload = {
+                                "data_uso": datetime.today().strftime('%d/%m/%Y'),
+                                "delivery_number": "Solicitação Brasil",
+                                "estudo": estudo_brasil,
+                                "te": te_brasil,
+                                "cidade_destino": centro_brasil,
+                                "itens": [
+                                    {
+                                        "tipo": p["label"],
+                                        "palete": p["palete"],
+                                        "id_est": p["id_est"],
+                                        "serie": p["serie"]
+                                    } for p in itens_brasil
+                                ]
+                            }
+
+                            try:
+                                req = urllib.request.Request(
+                                    webhook_url,
+                                    data=json.dumps(payload).encode('utf-8'),
+                                    headers={'Content-Type': 'application/json'}
+                                )
+                                resposta_bruta = urllib.request.urlopen(req, timeout=25).read().decode("utf-8")
+                                try:
+                                    resposta = json.loads(resposta_bruta)
+                                except ValueError:
+                                    resposta = {}
+
+                                if resposta.get("result") != "success":
+                                    raise RuntimeError(
+                                        resposta.get("message", f"Resposta inesperada do servidor: {resposta_bruta[:300]}")
+                                    )
+
+                                for p in itens_brasil:
+                                    st.session_state.seriais_consumidos.add(str(p["serie"]).strip())
+                                    st.session_state.ids_consumidos.add(str(p["id_est"]).strip())
+
+                                st.session_state.solicitacoes_brasil_registradas[arquivo_id_brasil] = {
+                                    "itens": itens_brasil,
+                                    "data_uso": datetime.today().strftime('%d/%m/%Y %H:%M'),
+                                }
+                                st.session_state.alocacao_pendente = False
+                                st.session_state.brasil_uploader_key += 1
+
+                                st.cache_data.clear()
+                                itens_txt_brasil = ", ".join([p["label"] for p in itens_brasil])
+                                st.success(f"✅ Retirada registrada com sucesso para: {itens_txt_brasil}.")
+                                time.sleep(2)
+                                st.rerun()
+                            except Exception as ex:
+                                st.error(f"Erro ao atualizar planilha: {ex}")
+                else:
+                    st.warning("⚠️ Estoque indisponível no momento — não é possível alocar Tag Alert automaticamente.")
+
+        # --- CHECKLIST DE PARTICULARIDADES (depois de escolher a categoria) ---
+        if categoria_brasil is not None:
+            st.markdown("### ✅ Checklist de Particularidades — BMS Brasil")
+            renderizar_checklist_brasil(
+                texto_brasil_upper, arquivo_id_brasil, tem_ref_brasil, tem_amb_brasil, categoria_brasil,
+            )
+
 # ==========================================
 # PÁGINA: GERADOR DE E-MAIL (GR)
 # ==========================================
 elif st.session_state.pagina_atual == "email":
 
-    st.markdown("""
-        <div style="background: linear-gradient(135deg, #1b3834 0%, #10281f 100%); padding: 20px 26px; border-radius: 12px; border-left: 6px solid #e59235; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <h2 style="color: #ffffff !important; margin: 0 0 6px 0; font-size: 18px;">📧 Gerador de E-mail (GR)</h2>
-            <p style="color: #cbd5e1; margin: 0; font-size: 13px; line-height: 1.4;">
-                Preencha os dados do recebimento para montar o e-mail de Goods Receipt (GR) e copie o assunto, os destinatários e o corpo já formatados.
-            </p>
-        </div>
-    """, unsafe_allow_html=True)
+    banner(
+        "📧 Gerador de E-mail (GR)",
+        "Preencha os dados do recebimento para montar o e-mail de Goods Receipt (GR) e copie o assunto, "
+        "os destinatários e o corpo já formatados.",
+    )
 
     if "email_uploader_key" not in st.session_state:
         st.session_state.email_uploader_key = 0
@@ -2265,11 +1093,8 @@ elif st.session_state.pagina_atual == "email":
             st.rerun()
 
     if pdf_gr is not None and st.session_state.email_dados_extraidos is None:
-        if not OCR_DISPONIVEL:
-            st.warning("⚠️ Leitura automática (OCR) não está disponível neste ambiente agora — preencha os campos manualmente abaixo.")
-        else:
-            with st.spinner("🔎 Lendo a Packing List (isso pode levar alguns segundos)..."):
-                st.session_state.email_dados_extraidos = extrair_dados_packing_para_email(pdf_gr)
+        with st.spinner("🔎 Lendo a Packing List (pode levar alguns segundos se for um PDF escaneado)..."):
+            st.session_state.email_dados_extraidos = extrair_dados_packing_para_email(pdf_gr)
 
     dados_gr = st.session_state.email_dados_extraidos
     if dados_gr:
@@ -2278,7 +1103,7 @@ elif st.session_state.pagina_atual == "email":
             st.success(
                 f"✅ PDF lido — Delivery **{dados_gr['delivery'] or '—'}**, Protocol **{dados_gr['protocolo'] or '—'}**, "
                 f"Order **{dados_gr['order'] or '—'}**, {qtd_itens} item(ns) encontrado(s). "
-                f"**Confira os campos abaixo antes de gerar o e-mail** — a leitura automática ocasionalmente erra um dígito. "
+                f"**Confira os campos abaixo antes de gerar o e-mail** — a leitura de PDF escaneado ocasionalmente erra um dígito. "
                 f"Brazilian Invoice e CESV continuam manuais."
             )
         else:
@@ -2286,471 +1111,4 @@ elif st.session_state.pagina_atual == "email":
     else:
         st.caption("Nenhum PDF lido ainda — os campos abaixo podem ser preenchidos manualmente, como hoje.")
 
-    def _escapar_html_attr_gr(valor):
-        return (valor or "").replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
-
-    def _montar_item_box_gr(descricao="", lote="", validade="", quantidade="", removivel=True):
-        botao_remover = '<button type="button" class="remove-btn" onclick="this.parentElement.remove();">X</button>' if removivel else ""
-        return f"""
-            <div class="item-box">
-              {botao_remover}
-              <div class="form-group full-width" style="margin-bottom: 10px;">
-                <label>DESCRIPTION (Descrição Completa do Material): <span class="required">*</span></label>
-                <input type="text" class="item-desc" placeholder="Ex: DEXAMETH TAB 4MG (1BLCRDX20) CA088 OLMUL" value="{_escapar_html_attr_gr(descricao)}" required>
-              </div>
-              <div class="form-grid">
-                <div class="form-group">
-                  <label>BATCH NUMBER (Lote): <span class="required">*</span></label>
-                  <input type="text" class="item-batch" placeholder="Ex: ADA3486" value="{_escapar_html_attr_gr(lote)}" required>
-                </div>
-                <div class="form-group">
-                  <label>EXP. DATE (Validade DD/MM/AAAA): <span class="required">*</span></label>
-                  <input type="text" class="item-exp" placeholder="Ex: 30/06/2030" value="{_escapar_html_attr_gr(validade)}" required>
-                </div>
-              </div>
-              <div class="form-group full-width" style="margin-top: 10px;">
-                <label>QUANTITY (Quantidade): <span class="required">*</span></label>
-                <input type="text" class="item-qty" placeholder="Ex: 80" value="{_escapar_html_attr_gr(quantidade)}" required>
-              </div>
-            </div>"""
-
-    if dados_gr and dados_gr["itens"]:
-        itens_html_gr = "".join(
-            _montar_item_box_gr(
-                descricao=item["descricao"],
-                lote=item["lote"],
-                validade=item["validade"],
-                quantidade=item["quantidade"],
-                removivel=(i > 0),
-            )
-            for i, item in enumerate(dados_gr["itens"])
-        )
-    else:
-        itens_html_gr = _montar_item_box_gr(removivel=False)
-
-    del_valor_gr = _escapar_html_attr_gr(dados_gr["delivery"]) if dados_gr else ""
-    protocolo_valor_gr = _escapar_html_attr_gr(dados_gr["protocolo"]) if dados_gr else ""
-    order_valor_gr = _escapar_html_attr_gr(dados_gr["order"]) if dados_gr else ""
-
-    GERADOR_EMAIL_HTML = """<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Gerador de E-mail de Recebimento / Liberação (Goods Receipt)</title>
-  <style>
-    * {
-      box-sizing: border-box;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    }
-    body {
-      background-color: #f0f2f5;
-      margin: 0;
-      padding: 20px;
-      color: #333;
-    }
-    .main-title {
-      text-align: center;
-      color: #0d6efd;
-      margin-bottom: 25px;
-      font-size: 24px;
-      font-weight: 700;
-    }
-    .app-container {
-      max-width: 1200px;
-      margin: 0 auto;
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 20px;
-    }
-    @media (max-width: 900px) {
-      .app-container {
-        grid-template-columns: 1fr;
-      }
-    }
-    .card {
-      background: #ffffff;
-      border-radius: 8px;
-      padding: 20px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-      margin-bottom: 20px;
-    }
-    .card-title {
-      color: #0d6efd;
-      font-size: 16px;
-      font-weight: 700;
-      margin-top: 0;
-      margin-bottom: 18px;
-    }
-    .form-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 15px;
-    }
-    .form-group {
-      display: flex;
-      flex-direction: column;
-    }
-    .form-group.full-width {
-      grid-column: span 2;
-    }
-    label {
-      font-size: 13px;
-      color: #555;
-      margin-bottom: 5px;
-      font-weight: 500;
-    }
-    label .required {
-      color: #dc3545;
-      font-weight: bold;
-    }
-    input[type="text"], textarea {
-      padding: 10px 12px;
-      border: 1px solid #ced4da;
-      border-radius: 6px;
-      font-size: 14px;
-      outline: none;
-      transition: border-color 0.2s;
-    }
-    input[type="text"]:focus, textarea:focus {
-      border-color: #0d6efd;
-    }
-    input[readonly] {
-      background-color: #e9ecef;
-      cursor: not-allowed;
-      color: #495057;
-      font-weight: 600;
-    }
-    .item-box {
-      border: 1px dashed #adb5bd;
-      border-radius: 6px;
-      padding: 15px;
-      margin-bottom: 15px;
-      background-color: #fafafa;
-      position: relative;
-    }
-    .remove-btn {
-      position: absolute;
-      top: 8px;
-      right: 8px;
-      background: #dc3545;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      padding: 2px 8px;
-      font-size: 12px;
-      cursor: pointer;
-    }
-    .btn-secondary {
-      background-color: #6c757d;
-      color: white;
-      border: none;
-      padding: 8px 14px;
-      border-radius: 6px;
-      font-weight: 600;
-      font-size: 13px;
-      cursor: pointer;
-      margin-bottom: 15px;
-    }
-    .btn-secondary:hover {
-      background-color: #5c636a;
-    }
-    .btn-primary {
-      background-color: #0d6efd;
-      color: white;
-      border: none;
-      padding: 12px;
-      border-radius: 6px;
-      font-weight: bold;
-      font-size: 15px;
-      width: 100%;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    .btn-primary:hover {
-      background-color: #0b5ed7;
-    }
-    .btn-copy {
-      background-color: #198754;
-      color: white;
-      border: none;
-      padding: 8px 14px;
-      border-radius: 6px;
-      font-weight: 600;
-      font-size: 13px;
-      cursor: pointer;
-      margin-top: 8px;
-      margin-bottom: 15px;
-    }
-    .btn-copy:hover {
-      background-color: #157347;
-    }
-    .readonly-box {
-      background-color: #e9ecef;
-      border: 1px solid #ced4da;
-      padding: 10px 12px;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: 600;
-      color: #212529;
-      word-break: break-all;
-      min-height: 40px;
-    }
-    .email-preview-container {
-      border: 1px solid #ced4da;
-      border-radius: 6px;
-      padding: 15px;
-      background: #ffffff;
-      min-height: 250px;
-      max-height: 450px;
-      overflow-y: auto;
-      font-family: Arial, sans-serif;
-      font-size: 13px;
-      color: #000;
-      line-height: 1.4;
-    }
-    .preview-table {
-      border-collapse: collapse;
-      width: 100%;
-      margin: 12px 0;
-    }
-    .preview-table th, .preview-table td {
-      border: 1px solid #000;
-      padding: 6px 8px;
-      font-family: Arial, sans-serif;
-      font-size: 12px;
-    }
-    .preview-table th {
-      font-weight: bold;
-      font-style: italic;
-      text-align: center;
-      text-transform: uppercase;
-      background-color: #ffffff;
-    }
-    .preview-table td {
-      text-align: center;
-    }
-    .toast {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      background: #198754;
-      color: white;
-      padding: 10px 20px;
-      border-radius: 6px;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.15);
-      display: none;
-      z-index: 1000;
-      font-weight: 500;
-    }
-  </style>
-</head>
-<body>
-  <div class="main-title">Gerador de E-mail de Recebimento / Liberação (Goods Receipt)</div>
-  <div class="app-container">
-    <!-- Coluna da Esquerda: Formulários -->
-    <div>
-      <form id="emailForm" onsubmit="event.preventDefault(); generateEmail();">
-        <div class="card">
-          <div class="card-title">1. Informações do Recebimento (Packing List / Documentação)</div>
-          <div class="form-grid">
-            <div class="form-group">
-              <label for="grNumber">Número GR: <span class="required">*</span></label>
-              <input type="text" id="grNumber" value="TO8616" readonly title="Número GR fixo">
-            </div>
-            <div class="form-group">
-              <label for="delNumber">Delivery Number (DEL#): <span class="required">*</span></label>
-              <input type="text" id="delNumber" placeholder="Ex: 8020016643" value="__DEL_VALUE_GR__" required>
-            </div>
-            <div class="form-group">
-              <label for="protocolNumber">Protocol Number: <span class="required">*</span></label>
-              <input type="text" id="protocolNumber" placeholder="Ex: CA088-1007" value="__PROTOCOLO_VALUE_GR__" required>
-            </div>
-            <div class="form-group">
-              <label for="orderNumber">Order Number: <span class="required">*</span></label>
-              <input type="text" id="orderNumber" placeholder="Ex: 45801492" value="__ORDER_VALUE_GR__" required>
-            </div>
-            <div class="form-group">
-              <label for="invoiceNumber">Brazilian Invoice: <span class="required">*</span></label>
-              <input type="text" id="invoiceNumber" placeholder="Ex: 40533-1" required>
-            </div>
-            <div class="form-group">
-              <label for="cesvNumber">CESV: <span class="required">*</span></label>
-              <input type="text" id="cesvNumber" placeholder="Ex: 2601002022" required>
-            </div>
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-title">2. Itens do Recebimento (Material / Lotes)</div>
-          <div id="itemsContainer">
-            <!--ITENS_PLACEHOLDER_GR-->
-          </div>
-          <button type="button" class="btn-secondary" onclick="addItem()">+ Adicionar Mais um Item</button>
-          <button type="submit" class="btn-primary">Gerar Texto do E-mail</button>
-        </div>
-      </form>
-    </div>
-    <!-- Coluna da Direita: Destinatários e Preview -->
-    <div>
-      <div class="card">
-        <div class="card-title">3. Destinatários do E-mail (Para / CC)</div>
-        <div class="form-group">
-          <label>E-mails para Copiar:</label>
-          <textarea id="recipients" rows="4">BMSOPSBLA@BMS.COM; Radu.Ciobanescu@bms.com; laura.sourwine@bms.com; cso.distribution@bms.com; MG-BRZ-IMPORT-CTA@bms.com; daniela.mizushima@bms.com;</textarea>
-        </div>
-        <button type="button" class="btn-copy" onclick="copyRecipients()">Copiar Destinatários</button>
-      </div>
-      <div class="card">
-        <div class="card-title">4. Preview do E-mail Gerado</div>
-
-        <div class="form-group" style="margin-bottom: 5px;">
-          <label>Assunto do E-mail (Subject Line):</label>
-          <div class="readonly-box" id="subjectBox">BMS/GR/TO8616/DEL#</div>
-        </div>
-        <button type="button" class="btn-copy" onclick="copySubject()">Copiar Assunto</button>
-        <div class="form-group" style="margin-bottom: 5px; margin-top: 10px;">
-          <label>Corpo do E-mail (Body):</label>
-          <div class="email-preview-container" id="emailBodyContainer" contenteditable="true">
-            <p style="color: #6c757d; italic;">Preencha os campos ao lado e clique em "Gerar Texto do E-mail"...</p>
-          </div>
-        </div>
-        <button type="button" class="btn-copy" onclick="copyBody()">Copiar Corpo do E-mail</button>
-      </div>
-    </div>
-  </div>
-  <div class="toast" id="toastNotification">Copiado com sucesso!</div>
-  <script>
-    function addItem() {
-      const container = document.getElementById('itemsContainer');
-      const itemBox = document.createElement('div');
-      itemBox.className = 'item-box';
-      itemBox.innerHTML = `
-        <button type="button" class="remove-btn" onclick="this.parentElement.remove();">X</button>
-        <div class="form-group full-width" style="margin-bottom: 10px;">
-          <label>DESCRIPTION (Descrição Completa do Material): <span class="required">*</span></label>
-          <input type="text" class="item-desc" placeholder="Ex: DEXAMETH TAB 4MG (1BLCRDX20) CA088 OLMUL" required>
-        </div>
-        <div class="form-grid">
-          <div class="form-group">
-            <label>BATCH NUMBER (Lote): <span class="required">*</span></label>
-            <input type="text" class="item-batch" placeholder="Ex: ADA3486" required>
-          </div>
-          <div class="form-group">
-            <label>EXP. DATE (Validade DD/MM/AAAA): <span class="required">*</span></label>
-            <input type="text" class="item-exp" placeholder="Ex: 30/06/2030" required>
-          </div>
-        </div>
-        <div class="form-group full-width" style="margin-top: 10px;">
-          <label>QUANTITY (Quantidade): <span class="required">*</span></label>
-          <input type="text" class="item-qty" placeholder="Ex: 80" required>
-        </div>
-      `;
-      container.appendChild(itemBox);
-    }
-    function generateEmail() {
-      const gr = document.getElementById('grNumber').value.trim();
-      const del = document.getElementById('delNumber').value.trim();
-      const protocol = document.getElementById('protocolNumber').value.trim();
-      const order = document.getElementById('orderNumber').value.trim();
-      const invoice = document.getElementById('invoiceNumber').value.trim();
-      const cesv = document.getElementById('cesvNumber').value.trim();
-      const subject = `BMS/GR/${gr}/DEL#${del}`;
-      document.getElementById('subjectBox').innerText = subject;
-      const itemBoxes = document.querySelectorAll('#itemsContainer .item-box');
-      let tableRows = '';
-      itemBoxes.forEach(box => {
-        const desc = box.querySelector('.item-desc').value.trim();
-        const batch = box.querySelector('.item-batch').value.trim();
-        const exp = box.querySelector('.item-exp').value.trim();
-        const qty = box.querySelector('.item-qty').value.trim();
-        tableRows += `
-          <tr>
-            <td style="text-align: center;">${desc}</td>
-            <td style="text-align: center;">${batch}</td>
-            <td style="text-align: center;">${exp}</td>
-            <td style="text-align: center;">${qty}</td>
-          </tr>
-        `;
-      });
-      const tableHtml = `
-        <table class="preview-table">
-          <thead>
-            <tr>
-              <th>DESCRIPTION</th>
-              <th>BATCH NUMBER</th>
-              <th>EXP. DATE</th>
-              <th>QUANTITY</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${tableRows}
-          </tbody>
-        </table>
-      `;
-      const bodyHtml = `
-        <div>Dear all,</div>
-        <br>
-        <div>I would like to inform you that we have received at DRS the following items to ${protocol}.</div>
-        <br>
-        <div><strong>BRAZILIAN INVOICE</strong> ${invoice}</div>
-        <div><strong>CESV</strong> ${cesv}</div>
-        <div><strong>Order Number:</strong> ${order}</div>
-        <div><strong>DEL#${del}</strong></div>
-        ${tableHtml}
-        <div>All the goods receipt has been double inspected.</div>
-        <br>
-        <ul style="margin-top: 0; margin-bottom: 0; padding-left: 20px;">
-          <li>Find attached the signed Packing List.</li>
-          <li>Find attached the Temperature Graphics received.</li>
-        </ul>
-      `;
-      document.getElementById('emailBodyContainer').innerHTML = bodyHtml;
-    }
-    function showToast(msg) {
-      const toast = document.getElementById('toastNotification');
-      toast.innerText = msg;
-      toast.style.display = 'block';
-      setTimeout(() => {
-        toast.style.display = 'none';
-      }, 2000);
-    }
-    function copyRecipients() {
-      const text = document.getElementById('recipients').value;
-      navigator.clipboard.writeText(text);
-      showToast('Destinatários copiados!');
-    }
-    function copySubject() {
-      const text = document.getElementById('subjectBox').innerText;
-      navigator.clipboard.writeText(text);
-      showToast('Assunto copiado!');
-    }
-    function copyBody() {
-      const container = document.getElementById('emailBodyContainer');
-
-      const range = document.createRange();
-      range.selectNodeContents(container);
-      const selection = window.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
-      try {
-        document.execCommand('copy');
-        showToast('Corpo do e-mail copiado com formatação e tabela!');
-      } catch (err) {
-        showToast('Erro ao copiar!');
-      }
-      selection.removeAllRanges();
-    }
-  </script>
-</body>
-</html>
-"""
-
-    GERADOR_EMAIL_HTML = (
-        GERADOR_EMAIL_HTML
-        .replace("__DEL_VALUE_GR__", del_valor_gr)
-        .replace("__PROTOCOLO_VALUE_GR__", protocolo_valor_gr)
-        .replace("__ORDER_VALUE_GR__", order_valor_gr)
-        .replace("<!--ITENS_PLACEHOLDER_GR-->", itens_html_gr)
-    )
-
-    components.html(GERADOR_EMAIL_HTML, height=1450, scrolling=True)
+    components.html(montar_html_gerador(dados_gr), height=1450, scrolling=True)
