@@ -147,6 +147,7 @@ from checklist_particularidades import renderizar_checklist_particularidades
 from checklist_brasil import renderizar_checklist_brasil, CATEGORIA_MEDICACAO, CATEGORIA_SUPRIMENTO
 from leitura_packing import extrair_dados_packing_para_email, OCR_DISPONIVEL
 from gerador_email import montar_html_gerador
+from tabela_programacao import html_tabela_programacao
 
 
 # --- CONFIGURAÇÕES DA PÁGINA ---
@@ -461,7 +462,7 @@ def carregar_dados_sheets():
 df_estoque, df_te = carregar_dados_sheets()
 
 # --- NAVEGAÇÃO ---
-if "pagina_atual" not in st.session_state or st.session_state.pagina_atual not in ("automacao", "bms_brasil", "email"):
+if "pagina_atual" not in st.session_state or st.session_state.pagina_atual not in ("automacao", "bms_brasil", "email", "tabela_programacao"):
     st.session_state.pagina_atual = "automacao"
 
 # --- BARRA LATERAL ---
@@ -488,6 +489,7 @@ with st.sidebar:
         ("automacao", "📦  Automação de Packing List"),
         ("bms_brasil", "🇧🇷  BMS Brasil - Solicitações"),
         ("email", "📧  Gerador de E-mail (GR)"),
+        ("tabela_programacao", "🗓️  Tabela de Coleta e Entrega"),
     ]
     for chave, rotulo in paginas_menu:
         ativa = st.session_state.pagina_atual == chave
@@ -1112,3 +1114,16 @@ elif st.session_state.pagina_atual == "email":
         st.caption("Nenhum PDF lido ainda — os campos abaixo podem ser preenchidos manualmente, como hoje.")
 
     components.html(montar_html_gerador(dados_gr), height=1450, scrolling=True)
+
+# ==========================================
+# PÁGINA: TABELA DE PROGRAMAÇÃO DE COLETA E ENTREGA (BMS / IQVIA)
+# ==========================================
+elif st.session_state.pagina_atual == "tabela_programacao":
+
+    banner(
+        "🗓️ Tabela de Coleta e Entrega",
+        "Preencha a programação de <b>BMS</b> ou <b>IQVIA</b> direto na tabela, clique em <b>Copiar tabela</b> e "
+        "cole no e-mail (Ctrl+V): o visual vai igual ao que está na tela. O que você digita fica salvo neste navegador.",
+    )
+
+    components.html(html_tabela_programacao(), height=1150, scrolling=True)
